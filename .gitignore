@@ -1,0 +1,6 @@
+*~
+/.direnv/
+**/result
+*.pyc
+data/test*
+data/train*

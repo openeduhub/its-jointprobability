@@ -1,0 +1,7 @@
+setuptools
+uvicorn
+pydantic
+fastapi
+pyro-ppl
+torch
+nlprep
