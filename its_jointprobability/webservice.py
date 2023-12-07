@@ -25,6 +25,11 @@ def main():
     parser.add_argument(
         "--host", action="store", default="0.0.0.0", help="Hosts to listen on", type=str
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Whether to enable debug mode (more constrained allowed values)",
+    )
 
     parser.add_argument(
         "--version",
@@ -34,6 +39,7 @@ def main():
 
     # read passed CLI arguments
     args = parser.parse_args()
+    debug: bool = args.debug
 
     # import the model and auxiliary data
     data_dir = Path.cwd() / "data"
@@ -53,7 +59,9 @@ def main():
 
     class Prediction_Data(BaseModel):
         text: str
-        num_samples: int = Field(default=100, gt=1, le=1000)
+        num_samples: int = Field(
+            default=100 if not debug else 2, gt=1, le=1000 if not debug else 10
+        )
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)
 
     class Prediction_Result(BaseModel):
@@ -65,8 +73,10 @@ def main():
         classification: list[Disciplines_Enum]
         learning_rate: float = Field(default=1.0, le=1.0, gt=0.0)
         gamma: float = Field(default=0.001, le=1.0, gt=0.0)
-        num_repeats: int = Field(default=10, gt=0, le=1000)
-        num_train_iterations: int = Field(default=100, gt=0, le=1000)
+        num_repeats: int = Field(default=10, gt=0, le=1000 if not debug else 10)
+        num_train_iterations: int = Field(
+            default=100 if not debug else 1, gt=0, le=1000 if not debug else 50
+        )
         num_losses_head: int = Field(default=2, gt=0)
         num_losses_tail: int = Field(default=2, gt=0)
 
