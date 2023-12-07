@@ -96,7 +96,6 @@
 
         get-python-package = pkgs: python-pkg-lib (get-python pkgs).pkgs;
         get-python-application = pkgs: (get-python pkgs).pkgs.toPythonApplication (get-python-package pkgs);
-        get-retrain-model = pkgs: pkgs.writeScriptBin "rebuild-model" "${(get-python-application pkgs)}/bin/retrain-model";
 
         get-devShell = pkgs: pkgs.mkShell {
           buildInputs = [
@@ -115,16 +114,15 @@
         # the packages that we can build
         packages = rec {
           webservice = get-python-application pkgs-without-cuda;
-          retrain-model = get-retrain-model pkgs-without-cuda;
           default = webservice;
         } //
         # CUDA is only supported on x86_64 linux
         (
           nixpkgs.lib.optionalAttrs
             (system == "x86_64-linux")
-            {
+            rec {
               webservice-with-cuda = get-python-application pkgs-with-cuda;
-              retrain-model-with-cuda = get-retrain-model pkgs-with-cuda;
+              with-cuda = webservice-with-cuda;
             }
         );
         # the library that may be used in different python versions
