@@ -23,6 +23,12 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, ... }:
+    {
+      # define an overlay to add text-extraction to nixpkgs
+      overlays.default = (final: prev: {
+        its-jointprobability = self.packages.${final.system}.webservice;
+      });
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs-with-cuda = import nixpkgs {
