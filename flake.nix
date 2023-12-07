@@ -1,5 +1,5 @@
 {
-  description = "A Python package defined as a Nix Flake";
+  description = "A Bayesian approach to metadata prediction in education";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -8,6 +8,12 @@
     nlprep = {
       url = "github:openeduhub/nlprep";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    openapi-checks = {
+      url = "github:openeduhub/nix-openapi-checks";
+      inputs = {
+        flake-utils.follows = "flake-utils";
+      };
     };
   };
 
@@ -45,6 +51,7 @@
             cudaSupport = false;
           };
         };
+        openapi-checks = self.inputs.openapi-checks.lib.${system};
         nix-filter = self.inputs.nix-filter.lib;
         get-python = pkgs: pkgs.python310;
 
@@ -147,6 +154,20 @@
               with-cuda = (get-devShell pkgs-with-cuda);
             }
         );
+        checks = { } // (nixpkgs.lib.optionalAttrs
+          # only run the VM checks on linux systems
+          (system == "x86_64-linux" || system == "aarch64-linux")
+          {
+            openapi-check = (
+              openapi-checks.test-service {
+                service-bin =
+                  "${self.packages.${system}.webservice}/bin/its-jointprobability --debug";
+                service-port = 8080;
+                openapi-domain = "/openapi.json";
+                memory-size = 2048;
+              }
+            );
+          });
       }
     );
 }
