@@ -1,19 +1,17 @@
 import argparse
 from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
 
 import pyro.ops.stats
 import torch
-from torch.nn.modules import loss
 import uvicorn
 from fastapi import FastAPI
-from icecream import ic
 from pydantic import BaseModel, Field
-from enum import Enum
 
 from its_jointprobability._version import __version__
 from its_jointprobability.models.prodslda_sep import Classification, import_data
-from its_jointprobability.utils import labels_to_tensor, texts_to_bow_tensor, device
+from its_jointprobability.utils import device, labels_to_tensor, texts_to_bow_tensor
 
 
 def main():
