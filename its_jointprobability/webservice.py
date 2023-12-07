@@ -172,6 +172,10 @@ def main():
         def app(self) -> FastAPI:
             app = FastAPI()
 
+            @app.get("/_ping")
+            def _ping():
+                pass
+
             app.get(
                 "/disciplines",
                 summary="The list of all supported disciplines.",
