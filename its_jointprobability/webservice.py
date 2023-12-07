@@ -112,8 +112,8 @@ class Webservice:
             initial_lr=inp.learning_rate,
         )
 
-        losses_head = losses[-inp.num_losses_head :]
-        losses_tail = losses[: inp.num_losses_tail]
+        losses_tail = losses[-inp.num_losses_tail :]
+        losses_head = losses[: inp.num_losses_head]
 
         return Update_Output(
             losses_head=losses_head,
