@@ -326,6 +326,7 @@ def retrain_model(
 ) -> Classification:
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
     train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+    scale = 1
 
     if clear_store:
         pyro.get_param_store().clear()
@@ -339,7 +340,8 @@ def retrain_model(
 
         except FileNotFoundError:
             print("training topic model")
-            prodslda = prodslda_module.retrain_model(path)
+            with pyro.poutine.scale(scale=scale):
+                prodslda = prodslda_module.retrain_model(path)
 
     print("training classification")
     model = Classification.with_priors(
@@ -356,7 +358,6 @@ def retrain_model(
     batch_size = math.ceil(train_data.shape[-2] / num_epochs)
     batch_strategy = get_random_batch_strategy(train_data.shape[-2], batch_size)
 
-    scale = 1 / float(np.prod(train_labels.shape))
     with pyro.poutine.scale(scale=scale):
         for index, batch_ids in enumerate(batch_to_list(batch_strategy)):
             print(f"epoch {index + 1} / {num_epochs}")
