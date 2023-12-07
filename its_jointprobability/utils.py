@@ -2,7 +2,7 @@
 import math
 import random
 from collections.abc import Iterable, Iterator, Sequence
-from typing import Optional
+from typing import Optional, TypeVar
 
 import nlprep.spacy.props as nlp
 import torch
@@ -36,8 +36,11 @@ def texts_to_bow_tensor(*texts, token_dict) -> torch.Tensor:
     return F.one_hot(docs_as_tensor, num_classes=len(tokens)).sum(-2).float()
 
 
+T = TypeVar("T")
+
+
 def labels_to_tensor(
-    *labels_col: Iterable[str], label_values: Sequence[str]
+    *labels_col: Iterable[T], label_values: Sequence[T]
 ) -> torch.Tensor:
     """Transform the given labels to a boolean tensor"""
     labels_indexes = [
