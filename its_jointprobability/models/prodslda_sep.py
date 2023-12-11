@@ -445,15 +445,18 @@ def retrain_model_cli():
         pass
 
 
-def import_data(path: Path) -> tuple[Classification, dict[int, str], list[str]]:
+def import_data(
+    path: Path,
+) -> tuple[Classification, dict[int, str], list[str], list[str]]:
     classification = torch.load(path / "classification", map_location=device)
     # ensure that the model is running on the correct device
     # this does not get changed by setting the map location above
     classification.device = device
     dictionary = torch.load(path / "dictionary")
     labels = torch.load(path / "labels")
+    uris = torch.load(path / "uris")
 
-    return classification, dictionary, labels
+    return classification, dictionary, labels, uris
 
 
 if __name__ == "__main__":
