@@ -42,14 +42,22 @@ def main():
 
     # import the model and auxiliary data
     data_dir = Path.cwd() / "data"
-    model, dictionary, disciplines = import_data(data_dir)
+    model, dictionary, disciplines_raw, uris_raw = import_data(data_dir)
 
     # collect the possible discipline values in an Enum
     Disciplines_Enum = Enum(
         "Disciplines_Enum",
-        dict((discipline, discipline) for discipline in disciplines),
+        dict((discipline, discipline) for discipline in disciplines_raw),
         type=str,
     )
+    Disciplines_Enum_URI = Enum(
+        "Disciplines_URI_Enum",
+        dict((uri, uri) for uri in uris_raw),
+        type=str,
+    )
+
+    disciplines = [Disciplines_Enum(disc) for disc in disciplines_raw]
+    uris = [Disciplines_Enum_URI(uri) for uri in uris_raw]
 
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
@@ -64,6 +72,7 @@ def main():
     class Discipline(BaseModel):
         """An individual prediction for a particular school discipline."""
 
+        id: Disciplines_Enum_URI
         name: Disciplines_Enum
         mean_prob: float
         median_prob: float
@@ -75,7 +84,21 @@ def main():
         disciplines: list[Discipline]
         version: str = __version__
 
-    class Update_Input(BaseModel):
+    class Update_Input_URI(BaseModel):
+        """Input to be used for updating the model."""
+
+        text: str
+        classification: list[Disciplines_Enum_URI]
+        learning_rate: float = Field(default=1.0, le=1.0, gt=0.0)
+        gamma: float = Field(default=0.001, le=1.0, gt=0.0)
+        num_repeats: int = Field(default=10, gt=0, le=1000 if not debug else 10)
+        num_train_iterations: int = Field(
+            default=100 if not debug else 1, gt=0, le=1000 if not debug else 50
+        )
+        num_losses_head: int = Field(default=2, gt=0)
+        num_losses_tail: int = Field(default=2, gt=0)
+
+    class Update_Input_Label(BaseModel):
         """Input to be used for updating the model."""
 
         text: str
@@ -99,19 +122,9 @@ def main():
     class Webservice:
         """The actual web service."""
 
-        def __init__(
-            self,
-            model: Classification,
-            token_dict: dict[int, str],
-            labels: Sequence[str],
-        ) -> None:
+        def __init__(self, model: Classification, token_dict: dict[int, str]) -> None:
             self.model = model
             self.token_dict = token_dict
-            self.labels = labels
-
-        def disciplines(self) -> Sequence[str]:
-            """The school disciplines that can be predicted."""
-            return self.labels
 
         def predict_disciplines(self, inp: Prediction_Data) -> Prediction_Result:
             try:
@@ -134,13 +147,18 @@ def main():
             disciplines = sorted(
                 [
                     Discipline(
+                        id=uri,
                         name=label,
                         mean_prob=float(mean_prob),
                         median_prob=float(median_prob),
                         prob_interval=interval,
                     )
-                    for label, mean_prob, median_prob, interval in zip(
-                        Disciplines_Enum, mean_probs, median_probs, intervals
+                    for label, uri, mean_prob, median_prob, interval in zip(
+                        Disciplines_Enum,
+                        Disciplines_Enum_URI,
+                        mean_probs,
+                        median_probs,
+                        intervals,
                     )
                 ],
                 key=lambda x: x.median_prob,
@@ -149,7 +167,7 @@ def main():
 
             return Prediction_Result(disciplines=disciplines)
 
-        def update_model(self, inp: Update_Input) -> Update_Output:
+        def update_model(self, inp: Update_Input_URI) -> Update_Output:
             texts = [inp.text for _ in range(inp.num_repeats)]
             # ignore multiple identical labels
             labels = [list(set(inp.classification)) for _ in range(inp.num_repeats)]
@@ -157,7 +175,7 @@ def main():
             try:
                 bows_tensor = texts_to_bow_tensor(*texts, token_dict=self.token_dict)
                 labels_tensor = labels_to_tensor(
-                    *labels, label_values=[e for e in Disciplines_Enum]
+                    *labels, label_values=[e for e in Disciplines_Enum_URI]
                 )
             except RuntimeError:
                 return Update_Output(
@@ -182,6 +200,25 @@ def main():
                 num_train_iterations=len(losses),
             )
 
+        def update_model_label(self, inp: Update_Input_Label) -> Update_Output:
+            classification_uris = [
+                Disciplines_Enum_URI(uris[disciplines.index(label)])
+                for label in inp.classification
+            ]
+
+            return self.update_model(
+                Update_Input_URI(
+                    text=inp.text,
+                    classification=classification_uris,
+                    learning_rate=inp.learning_rate,
+                    gamma=inp.gamma,
+                    num_repeats=inp.num_repeats,
+                    num_train_iterations=inp.num_train_iterations,
+                    num_losses_head=inp.num_losses_head,
+                    num_losses_tail=inp.num_losses_tail,
+                )
+            )
+
         @property
         def app(self) -> FastAPI:
             app = FastAPI()
@@ -190,14 +227,6 @@ def main():
             def _ping():
                 pass
 
-            app.get(
-                "/disciplines",
-                summary="The list of all supported disciplines.",
-                description="""
-                
-                See <https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/discipline/index.html> for a list of all disciplines
-                """,
-            )(self.disciplines)
             app.post(
                 "/predict_disciplines",
                 summary="Predict the disciplines belonging to the given text.",
@@ -230,6 +259,8 @@ def main():
 
                 Discipline
                 ----------
+                id : str
+                    The URI of the discipline.
                 name : str
                     The name of the discipline.
                 mean_prob : float [0, 1]
@@ -258,7 +289,7 @@ def main():
                 text : str
                     The text based on which the model is to be updated.
                 classification : array of str
-                    The school disciplines that fit to the given text.
+                    The URIs of school disciplines that fit to the given text.
                 learning_rate : float (0, 1]
                     The speed with which to learn from the data.
                     The lower num_repeats is chosen, the lower this should be.
@@ -305,9 +336,15 @@ def main():
                 """,
             )(self.update_model)
 
+            app.post(
+                "/update_model_label",
+                summary="Update the model with a text and discipline assignment.",
+                description="Like update_model, but with discipline names instead of URIs.",
+            )(self.update_model_label)
+
             return app
 
-    webservice = Webservice(model, dictionary, disciplines)
+    webservice = Webservice(model, dictionary)
     app = webservice.app
 
     print(f"running on device {device}")
