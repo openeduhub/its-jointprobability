@@ -429,15 +429,20 @@ def retrain_model_cli():
     )["a"]
     print(quality_measures(samples, train_labels, mean_dim=0, cutoff=None))
 
-    # evaluate the newly trained model on the testing data
-    print("evaluating model on test data")
-    test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
-    test_labels: torch.Tensor = torch.load(path / "test_labels", map_location=device)
+    try:
+        # evaluate the newly trained model on the testing data
+        print("evaluating model on test data")
+        test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
+        test_labels: torch.Tensor = torch.load(
+            path / "test_labels", map_location=device
+        )
 
-    samples = model.draw_posterior_samples(
-        test_data.shape[-2], data_args=[test_data], return_sites=["a"]
-    )["a"]
-    print(quality_measures(samples, test_labels, mean_dim=0, cutoff=None))
+        samples = model.draw_posterior_samples(
+            test_data.shape[-2], data_args=[test_data], return_sites=["a"]
+        )["a"]
+        print(quality_measures(samples, test_labels, mean_dim=0, cutoff=None))
+    except FileNotFoundError:
+        pass
 
 
 def import_data(path: Path) -> tuple[Classification, dict[int, str], list[str]]:
