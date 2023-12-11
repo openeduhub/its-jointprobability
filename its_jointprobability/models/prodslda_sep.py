@@ -31,6 +31,14 @@ path = Path.cwd() / "data"
 
 
 class Classification(Simple_Model):
+    """
+    A fully Bayesian classification model that relies on a given
+    topic model (which may not be fully Bayesian) in order assign
+    topics to documents.
+
+    These assigned topics are then used linearly for classification.
+    """
+
     return_sites = ("label", "nu", "a")
     return_site_cat_dim = {"nu": 0, "a": -1, "label": -1}
 
@@ -63,6 +71,7 @@ class Classification(Simple_Model):
         logtheta_scale: float = 1.0,
         **kwargs,
     ) -> torch.Tensor:
+        """The prior on the per-document assignment of topics."""
         return pyro.sample(
             "logtheta",
             dist.Normal(
@@ -72,6 +81,12 @@ class Classification(Simple_Model):
         )
 
     def logtheta_posterior(self, docs, *args, **kwargs) -> torch.Tensor:
+        """
+        The variational family on the per-document assignment of topics.
+
+        This directly uses the given topic model in order to obtain the
+        hyperparameters for the distribution used here.
+        """
         return pyro.sample(
             "logtheta", dist.Normal(*self.prodlda_logtheta_params(docs)).to_event(1)
         )
@@ -79,11 +94,14 @@ class Classification(Simple_Model):
     def nu_prior(
         self, *args, nu_loc: float = 0.0, nu_scale: float = 10.0, **kwargs
     ) -> torch.Tensor:
+        """The prior on the label x topic relevance-matrix."""
         return pyro.sample(
             "nu",
             dist.Normal(
-                nu_loc * torch.ones(self.num_topics, device=self.device),
-                nu_scale * torch.ones(self.num_topics, device=self.device),
+                nu_loc
+                * torch.ones(self.label_size, 1, self.num_topics, device=self.device),
+                nu_scale
+                * torch.ones(self.label_size, 1, self.num_topics, device=self.device),
             ).to_event(1),
         )
 
@@ -94,14 +112,15 @@ class Classification(Simple_Model):
         nu_scale: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
+        """The posterior on the label x topic revelance-matrix."""
         nu_loc = (
             nu_loc
             if nu_loc is not None
             else pyro.param(
                 "nu_loc",
                 lambda: torch.randn(
-                    self.label_size, self.num_topics, device=self.device
-                ).unsqueeze(-2),
+                    self.label_size, 1, self.num_topics, device=self.device
+                ),
             )
         )
         nu_scale = (
@@ -110,8 +129,8 @@ class Classification(Simple_Model):
             else pyro.param(
                 "nu_scale",
                 lambda: torch.ones(
-                    self.label_size, self.num_topics, device=self.device
-                ).unsqueeze(-2),
+                    self.label_size, 1, self.num_topics, device=self.device
+                ),
                 constraint=dist.constraints.positive,
             )
         )
@@ -120,6 +139,7 @@ class Classification(Simple_Model):
     def a_prior(
         self, nu, theta, *args, a_scale: float = 10.0, **kwargs
     ) -> torch.Tensor:
+        """The prior on the applicability of each label, given the topic mix."""
         return pyro.sample(
             "a",
             dist.Normal(
@@ -131,6 +151,8 @@ class Classification(Simple_Model):
     def a_posterior(
         self, nu, theta, *args, a_scale: Optional[torch.Tensor] = None, **kwargs
     ):
+        """The posterior on the applicability of each label, given the topic mix."""
+
         a_scale = (
             a_scale
             if a_scale is not None
@@ -200,6 +222,9 @@ class Classification(Simple_Model):
         labels: Optional[torch.Tensor] = None,
         batch: Optional[Collection[int]] = None,
     ) -> torch.Tensor:
+        # essentially identical to the model,
+        # but uses the posterior functions, rather than the prior ones
+
         num_full_data = docs.shape[0]
 
         if batch is not None:
@@ -227,7 +252,6 @@ class Classification(Simple_Model):
     def clean_up_posterior_samples(
         self, posterior_samples: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
-        # posterior_samples = self.prodlda_clean_up_posterior_samples(posterior_samples)
         if "a" in posterior_samples:
             posterior_samples["a"] = posterior_samples["a"].swapaxes(-1, -2)
         if "nu" in posterior_samples:
@@ -242,6 +266,7 @@ class Classification(Simple_Model):
         num_samples: int = 1000,
         return_sites: Optional[Collection[str]] = None,
     ):
+        """Helper functions in order to draw posterior samples for texts."""
         return_sites = return_sites if return_sites is not None else self.return_sites
         bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
         return self.draw_posterior_samples(
@@ -260,6 +285,12 @@ class Classification(Simple_Model):
         device: Optional[torch.device] = None,
         **kwargs,
     ) -> Classification:
+        """
+        Create a model with some specified priors.
+
+        The priors may be specified through the keyword arguments,
+        which are passed to each prior function.
+        """
         obj = cls(
             label_size=label_size,
             prodslda=prodslda,
@@ -279,6 +310,9 @@ class Classification(Simple_Model):
         *args,
         **kwargs,
     ) -> list[float]:
+        """
+        Update this model inplace using the given documents and their discipline assignments.
+        """
         elbo = pyro.infer.Trace_ELBO(
             num_particles=num_particles, vectorize_particles=True
         )
@@ -299,15 +333,6 @@ class Classification(Simple_Model):
             nu_scale = pyro.param("nu_scale").detach()
             a_scale = pyro.param("a_scale").detach()
 
-        # create a new classification model with prior
-        # equal to this model's posteriors
-        # new_classification = Classification(
-        #     label_size=labels.shape[-1],
-        #     prodslda=self.prodslda,
-        #     observe_negative_labels=self.observe_negative_labels,
-        #     device=self.device,
-        # )
-
         self.logtheta_prior = self.logtheta_posterior
         self.nu_prior = partial(self.nu_posterior, nu_loc=nu_loc, nu_scale=nu_scale)  # type: ignore
         self.a_prior = partial(self.a_posterior, a_scale=a_scale)  # type: ignore
@@ -318,6 +343,13 @@ class Classification(Simple_Model):
         return losses
 
     def model_predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
+        """
+        Only draw samples from the model (not the guide).
+
+        We use this for the Bayesian updates, as they set the model's priors
+        to the approximated posteriors and reset the guides.
+        Thus, these guides are no longer useful for inference.
+        """
         return pyro.infer.Predictive(model=self.model, *args, **kwargs)
 
 
@@ -326,7 +358,6 @@ def retrain_model(
 ) -> Classification:
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
     train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
-    scale = 1
 
     if clear_store:
         pyro.get_param_store().clear()
@@ -339,9 +370,9 @@ def retrain_model(
                 raise FileNotFoundError
 
         except FileNotFoundError:
+            # if the topic model is missing, generate it
             print("training topic model")
-            with pyro.poutine.scale(scale=scale):
-                prodslda = prodslda_module.retrain_model(path)
+            prodslda = prodslda_module.retrain_model(path)
 
     print("training classification")
     model = Classification.with_priors(
@@ -358,21 +389,20 @@ def retrain_model(
     batch_size = math.ceil(train_data.shape[-2] / num_epochs)
     batch_strategy = get_random_batch_strategy(train_data.shape[-2], batch_size)
 
-    with pyro.poutine.scale(scale=scale):
-        for index, batch_ids in enumerate(batch_to_list(batch_strategy)):
-            print(f"epoch {index + 1} / {num_epochs}")
-            docs_batch = train_data[..., batch_ids, :]
-            labels_batch = train_labels[..., batch_ids, :]
-            with pyro.poutine.scale(scale=train_data.shape[-2] / docs_batch.shape[-2]):
-                model.bayesian_update(
-                    docs_batch,
-                    labels_batch,
-                    initial_lr=1,
-                    gamma=0.001,
-                    num_particles=8,
-                    max_epochs=250,
-                    batch_size=docs_batch.shape[-2],
-                )
+    for index, batch_ids in enumerate(batch_to_list(batch_strategy)):
+        print(f"epoch {index + 1} / {num_epochs}")
+        docs_batch = train_data[..., batch_ids, :]
+        labels_batch = train_labels[..., batch_ids, :]
+        with pyro.poutine.scale(scale=train_data.shape[-2] / docs_batch.shape[-2]):
+            model.bayesian_update(
+                docs_batch,
+                labels_batch,
+                initial_lr=1,
+                gamma=0.001,
+                num_particles=8,
+                max_epochs=250,
+                batch_size=docs_batch.shape[-2],
+            )
 
     torch.save(model, path / "classification")
 
@@ -380,6 +410,7 @@ def retrain_model(
 
 
 def retrain_model_cli():
+    """Add some CLI arguments to the retraining of the model."""
     parser = argparse.ArgumentParser()
     parser.add_argument("path", type=str)
 
@@ -388,7 +419,8 @@ def retrain_model_cli():
     args = parser.parse_args()
     model = retrain_model(Path(args.path))
 
-    print("evaluating model")
+    # evaluate the newly trained model on the training data
+    print("evaluating model on train data")
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
     train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
 
@@ -396,6 +428,16 @@ def retrain_model_cli():
         train_data.shape[-2], data_args=[train_data], return_sites=["a"]
     )["a"]
     print(quality_measures(samples, train_labels, mean_dim=0, cutoff=None))
+
+    # evaluate the newly trained model on the testing data
+    print("evaluating model on test data")
+    test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
+    test_labels: torch.Tensor = torch.load(path / "test_labels", map_location=device)
+
+    samples = model.draw_posterior_samples(
+        test_data.shape[-2], data_args=[test_data], return_sites=["a"]
+    )["a"]
+    print(quality_measures(samples, test_labels, mean_dim=0, cutoff=None))
 
 
 def import_data(path: Path) -> tuple[Classification, dict[int, str], list[str]]:
@@ -409,19 +451,5 @@ def import_data(path: Path) -> tuple[Classification, dict[int, str], list[str]]:
     return classification, dictionary, labels
 
 
-def train_here_qualities() -> Classification:
-    path = Path.cwd() / "data"
-    model = retrain_model(path)
-
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
-
-    samples = model.draw_posterior_samples(
-        train_data.shape[-2], data_args=[train_data], return_sites=["a"]
-    )["a"]
-    print(quality_measures(samples, train_labels, mean_dim=0, cutoff=None))
-    return model
-
-
 if __name__ == "__main__":
-    train_here_qualities()
+    retrain_model_cli()

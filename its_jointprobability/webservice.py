@@ -1,3 +1,4 @@
+"""The webservice that allows for interaction with the Bayesian model."""
 import argparse
 from collections.abc import Sequence
 from enum import Enum
@@ -26,7 +27,7 @@ def main():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Whether to enable debug mode (more constrained allowed values)",
+        help="Whether to enable debug mode (more constrained allowed values). Primarily useful for automated testing.",
     )
 
     parser.add_argument(
@@ -50,25 +51,33 @@ def main():
         type=str,
     )
 
-    # classes that define interfaces for the API
-    class Discipline(BaseModel):
-        name: Disciplines_Enum
-        mean_prob: float
-        median_prob: float
-        prob_interval: list[float] = Field(min_items=2, max_items=2)
-
     class Prediction_Data(BaseModel):
+        """Input to be used for prediction."""
+
         text: str
         num_samples: int = Field(
             default=100 if not debug else 2, gt=1, le=1000 if not debug else 10
         )
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)
 
+    # classes that define interfaces for the API
+    class Discipline(BaseModel):
+        """An individual prediction for a particular school discipline."""
+
+        name: Disciplines_Enum
+        mean_prob: float
+        median_prob: float
+        prob_interval: list[float] = Field(min_items=2, max_items=2)
+
     class Prediction_Result(BaseModel):
+        """The output of the prediction."""
+
         disciplines: list[Discipline]
         version: str = __version__
 
     class Update_Input(BaseModel):
+        """Input to be used for updating the model."""
+
         text: str
         classification: list[Disciplines_Enum]
         learning_rate: float = Field(default=1.0, le=1.0, gt=0.0)
@@ -81,11 +90,15 @@ def main():
         num_losses_tail: int = Field(default=2, gt=0)
 
     class Update_Output(BaseModel):
+        """Some diagnostics to evaluate how well the update went."""
+
         losses_head: list[float]
         losses_tail: list[float]
         num_train_iterations: int
 
     class Webservice:
+        """The actual web service."""
+
         def __init__(
             self,
             model: Classification,
@@ -97,6 +110,7 @@ def main():
             self.labels = labels
 
         def disciplines(self) -> Sequence[str]:
+            """The school disciplines that can be predicted."""
             return self.labels
 
         def predict_disciplines(self, inp: Prediction_Data) -> Prediction_Result:

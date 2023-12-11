@@ -20,15 +20,21 @@ from icecream import ic
 
 
 class Simple_Model:
+    """Base class for Bayesian models that are learned through SVI."""
+
+    # the random variables that are contained within posterior samples
     return_sites: Collection[str]
+    # the dimensions along which to concat the random variables during batching
     return_site_cat_dim: dict[str, int]
 
     @abstractmethod
     def model(self, *args, batch: Optional[Collection[int]] = None, **kwargs):
+        """The prior model"""
         ...
 
     @abstractmethod
     def guide(self, *args, batch: Optional[Collection[int]] = None, **kwargs):
+        """The variational family that approximates the posterior on latent RVs"""
         ...
 
     def clean_up_posterior_samples(
@@ -56,6 +62,13 @@ class Simple_Model:
         z_score_num: int = 10,
         min_z_score: float = 1.0,
     ) -> list[float]:
+        """
+        Run stochastic variational inference.
+
+        Returns
+        -------
+        The list of losses
+        """
         train_args = train_args or list()
         train_kwargs = train_kwargs or dict()
 
@@ -112,7 +125,7 @@ class Simple_Model:
             # compute the last z-score
             mean = np.mean(losses[-z_score_num:])
             std = np.std(losses[-z_score_num:])
-            rel_std = np.abs(std / mean)
+            rel_std = np.abs(std / mean)  # type: ignore
             z_scores.append(np.abs((losses[-1] - mean) / std))
 
             epochs.set_postfix(
@@ -128,7 +141,8 @@ class Simple_Model:
 
         return losses
 
-    def predictive(self, *args, **kwargs):
+    def predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
+        """Return a Predictive object in order to generate posterior samples."""
         return pyro.infer.Predictive(self.model, guide=self.guide, *args, **kwargs)
 
     def draw_posterior_samples(
@@ -141,6 +155,7 @@ class Simple_Model:
         batch_size: int = 1000,
         return_sites: Optional[Collection[str]] = None,
     ) -> dict[str, torch.Tensor]:
+        """Draw posterior samples from this model."""
         return_sites = return_sites if return_sites is not None else self.return_sites
         data_args = data_args if data_args is not None else list()
         data_kwargs = data_kwargs if data_kwargs is not None else dict()
@@ -178,6 +193,8 @@ class Simple_Model:
 
 
 class Model(Simple_Model, PyroModule):
+    """A Bayesian model that relies on a neural network."""
+
     def run_svi(self, *args, **kwargs) -> list[float]:
         self.train()
         return super().run_svi(*args, **kwargs)
