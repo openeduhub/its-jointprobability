@@ -93,7 +93,9 @@ def main():
         gamma: float = Field(default=0.001, le=1.0, gt=0.0)
         num_repeats: int = Field(default=10, gt=0, le=1000 if not debug else 10)
         num_train_iterations: int = Field(
-            default=100 if not debug else 1, gt=0, le=1000 if not debug else 50
+            default=250 if not debug else 1,
+            ge=200 if not debug else 1,
+            le=1000 if not debug else 50,
         )
         num_losses_head: int = Field(default=2, gt=0)
         num_losses_tail: int = Field(default=2, gt=0)
@@ -107,7 +109,9 @@ def main():
         gamma: float = Field(default=0.001, le=1.0, gt=0.0)
         num_repeats: int = Field(default=10, gt=0, le=1000 if not debug else 10)
         num_train_iterations: int = Field(
-            default=100 if not debug else 1, gt=0, le=1000 if not debug else 50
+            default=250 if not debug else 1,
+            ge=200 if not debug else 1,
+            le=1000 if not debug else 50,
         )
         num_losses_head: int = Field(default=2, gt=0)
         num_losses_tail: int = Field(default=2, gt=0)
