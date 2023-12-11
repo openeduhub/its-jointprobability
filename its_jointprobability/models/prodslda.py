@@ -281,21 +281,4 @@ def retrain_model(path: Path, n=None) -> ProdSLDA:
     prodslda = prodslda.eval()
     torch.save(prodslda, path / "prodslda")
 
-    print("evaluating quality of topic model")
-
-    samples = prodslda.draw_posterior_samples(
-        train_data.shape[-2], data_args=[train_data]
-    )["label"]
-    print(quality_measures(samples, train_labels, mean_dim=0, cutoff=None))
-
-    # evaluate the newly trained model on the testing data
-    print("evaluating model on test data")
-    test_data: torch.Tensor = torch.load(path / "test_data", map_location=device).float()
-    test_labels: torch.Tensor = torch.load(path / "test_labels", map_location=device).float()
-
-    samples = prodslda.draw_posterior_samples(
-        test_data.shape[-2], data_args=[test_data], return_sites=["a"]
-    )["a"]
-    print(quality_measures(samples, test_labels, mean_dim=0, cutoff=None))
-
     return prodslda
