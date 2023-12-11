@@ -1,0 +1,109 @@
+#+title: its-jointprobability
+#+EXPORT_EXCLUDE_TAGS: noexport
+
+A Bayesian approach to generating metadata for educational materials.
+
+This project is primarily intended to be used as a microservice through the ~nix~ package. Additionally, it includes some CLI utilities in order to (re-) train the model for some data (data not included).
+
+* Usage
+
+** Service
+
+With ~Nix~, no further installation is required to run the microservice. Simply run the following command:
+#+begin_src shell
+nix run github:openeduhub/its-jointprobability
+#+end_src
+or optionally, with CUDA support:
+#+begin_src shell
+nix run "github:openeduhub/its-jointprobability#with-cuda"
+#+end_src
+
+If the package has been installed locally, the service is also available as ~its-jointprobability~ from the command line.
+
+For more information on configuration options, see
+#+begin_src shell
+nix run github:openeduhub/its-jointprobability -- --help
+#+end_src
+
+Once started, see the ~Swagger~ UI for documentation on the service.
+It is located on =http://localhost:8080/docs= by default.
+
+** Model Training
+
+To retrain the model under some data, use the included ~retrain-model~ CLI tool, e.g. through
+#+begin_src shell
+nix shell github:openeduhub/its-jointprobability -c retrain-model <path/to/data-dir>
+#+end_src
+or, *highly recommended*, with CUDA:
+#+begin_src shell
+nix shell "github:openeduhub/its-jointprobability#with-cuda" -c retrain-model <path/to/data-dir>
+#+end_src
+
+The utility will look for =train_data= and =train_labels=, which are assumed to files that can be loaded through [[https://pytorch.org/docs/stable/generated/torch.load.html][torch.load]]. These should be (=float=-type) [[https://pytorch.org/docs/stable/tensors.html#torch.Tensor][torch.Tensor]] objects with the following content:
+- ~train_data~ :: a two-dimensional =Tensor= where the first dimension corresponds to the individual documents to use for training and the second dimensions contains each document's content, encoded through their Bag-of-words representation.
+- ~train_labels~ :: a two-dimensional =Tensor= where the first dimension corresponds to the individual documents to use for training and the second dimension encodes whether each document belongs to each discipline (=1.0= if it does, =0.0= otherwise).
+
+Once the data has been loaded, the topic model will be trained (this will take a long time) and saved within the set directory under =prodslda=. If this file already exists, this step is skipped.
+
+Finally, the Bayesian classification model is trained and saved under =classification=. At this point, some quality metrics will be computed for the model on the training data. If ~test_data~ and ~test_labels~ are present in the given directory (analogous to the training data), these quality metrics will also be computed for this testing data.
+
+* Installation (through ~Nix Flakes~)
+
+Add this repository to your Flake inputs. This may look like this:
+#+begin_src nix
+{
+  inputs = {
+    its-jointprobability = {
+      url = "github:openeduhub/its-jointprobability";
+      # optional if using as application, required if using as library
+      nixpkgs.follows = "nixpkgs"; 
+    };
+  };
+}
+#+end_src
+
+The micro-service is provided both as a ~nixpkgs~ overlay and as an output (~packages.${system}.its-jointprobability~). Thus, it may be included through
+#+begin_src nix
+{
+  outputs = { self, nixpkgs, its-jointprobability, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs =
+        (nixpkgs.legacyPackages.${system}.extend
+          its-jointprobability.overlays.default);
+    in
+    { ... };
+}
+  
+#+end_src
+
+The Python library is provided as an output (~lib.${system}.its-jointprobability~). Note that this is a function mapping a Python package (e.g. ~pkgs.python310~) to the library. Its inclusion may look like this:
+#+begin_src nix
+{
+  outputs = { self, nixpkgs, its-jointprobability, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      
+      python-with-packages =
+        pkgs.python310.withPackages (py-pkgs: [
+          # some example packages
+          py-pkgs.numpy
+          py-pkgs.pandas
+          # the its-jointprobability library
+          (its-jointprobability.lib.${system}.its-jointprobability py-pkgs)
+        ]);
+    in
+    { ... };
+}
+#+end_src
+
+* Notes / Limitations
+
+** Model Updates
+
+The updates to the Bayesian model through the service are stored on the *RAM only*. Thus, they will not persist through restarts.
+
+** RAM Usage
+
+The service requires roughly 2GB of RAM to operate. This usage should be roughly static with time, as updates to the model replace the previous one and do not grow in complexity / size.
