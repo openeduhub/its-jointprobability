@@ -353,10 +353,16 @@ class Classification(Simple_Model):
 
 
 def retrain_model(
-    path: Path, clear_store=True, prodslda: Optional[ProdSLDA] = None
+    path: Path,
+    clear_store=True,
+    prodslda: Optional[ProdSLDA] = None,
+    seed: Optional[int] = None,
 ) -> Classification:
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
     train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+
+    if seed is not None:
+        pyro.set_rng_seed(seed)
 
     if clear_store:
         pyro.get_param_store().clear()
@@ -411,12 +417,22 @@ def retrain_model(
 def retrain_model_cli():
     """Add some CLI arguments to the retraining of the model."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", type=str)
+    parser.add_argument(
+        "path",
+        type=str,
+        help="The path to the directory containing the training data",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="The seed to use for pseudo random number generation",
+    )
 
     ic.disable()
 
     args = parser.parse_args()
-    model = retrain_model(Path(args.path))
+    model = retrain_model(Path(args.path), seed=args.seed)
 
     labels: torch.Tensor = torch.load(path / "labels")
 
