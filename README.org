@@ -1,9 +1,18 @@
+:PROPERTIES:
+:header-args: :results verbatim :exports both
+:END:
 #+title: its-jointprobability
 #+EXPORT_EXCLUDE_TAGS: noexport
 
 A Bayesian approach to generating metadata for educational materials.
 
 This project is primarily intended to be used as a microservice through the ~nix~ package. Additionally, it includes some CLI utilities in order to (re-) train the model for some data (data not included).
+
+* Utils :noexport:
+#+name: format-json
+#+begin_src sh :var result="" :results verbatim
+echo $result | json
+#+end_src
 
 * Usage
 
@@ -47,6 +56,106 @@ Once the data has been loaded, the topic model will be trained (this will take a
 
 Finally, the Bayesian classification model is trained and saved under =classification=. At this point, some quality metrics will be computed for the model on the training data. If ~test_data~ and ~test_labels~ are present in the given directory (analogous to the training data), these quality metrics will also be computed for this testing data.
 
+* Features & Demo of the Service
+:PROPERTIES:
+:header-args: :results verbatim :exports both :post format-json(result=*this*) :wrap src json
+:END:
+
+Once the service has started, we can ping it to check that it is responding to requests:
+#+begin_src shell :post
+curl -i -X GET http://localhost:8080/_ping
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+HTTP/1.1 200 OK
+date: Tue, 12 Dec 2023 13:13:26 GMT
+server: uvicorn
+content-length: 4
+content-type: application/json
+
+null
+#+end_src
+
+With the =/predict_disciplines= endpoint, we can send a text to be assigned school disciplines to the model:
+#+begin_src shell
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "num_predictions": "5"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+{
+  "disciplines": [
+    {
+      "id": "http://w3id.org/openeduhub/vocabs/discipline/380",
+      "name": "Mathematik",
+      "mean_prob": 0.5111302733421326,
+      "median_prob": 0.5166749358177185,
+      "prob_interval": [
+        0.09351685643196106,
+        0.9999991655349731
+      ]
+    },
+    {
+      "id": "http://w3id.org/openeduhub/vocabs/discipline/720",
+      "name": "Allgemein",
+      "mean_prob": 0.16330379247665405,
+      "median_prob": 0.05239475518465042,
+      "prob_interval": [
+        0.00019950949354097247,
+        0.322151243686676
+      ]
+    },
+    {
+      "id": "http://w3id.org/openeduhub/vocabs/discipline/460",
+      "name": "Physik",
+      "mean_prob": 0.11668184399604797,
+      "median_prob": 0.018872441723942757,
+      "prob_interval": [
+        0.00004402317790663801,
+        0.1610020399093628
+      ]
+    },
+    {
+      "id": "http://w3id.org/openeduhub/vocabs/discipline/100",
+      "name": "Chemie",
+      "mean_prob": 0.03657418116927147,
+      "median_prob": 0.00648672366514802,
+      "prob_interval": [
+        0.00004164048004895449,
+        0.03875169903039932
+      ]
+    },
+    {
+      "id": "http://w3id.org/openeduhub/vocabs/discipline/450",
+      "name": "Philosophie",
+      "mean_prob": 0.03066890500485897,
+      "median_prob": 0.0034108771942555904,
+      "prob_interval": [
+        0.000018125687347492203,
+        0.023937467485666275
+      ]
+    }
+  ],
+  "version": "0.1.1"
+}
+#+end_src
+
+* Notes / Limitations
+
+** Model Updates
+
+The updates to the Bayesian model through the service are stored on the *RAM only*. Thus, they will not persist through restarts.
+
+** RAM Usage
+
+The service requires roughly 2GB of RAM to operate. This usage should be roughly static with time, as updates to the model replace the previous one and do not grow in complexity / size.
 * Installation (through ~Nix Flakes~)
 
 Add this repository to your Flake inputs. This may look like this:
@@ -98,12 +207,3 @@ The Python library is provided as an output (~lib.${system}.its-jointprobability
 }
 #+end_src
 
-* Notes / Limitations
-
-** Model Updates
-
-The updates to the Bayesian model through the service are stored on the *RAM only*. Thus, they will not persist through restarts.
-
-** RAM Usage
-
-The service requires roughly 2GB of RAM to operate. This usage should be roughly static with time, as updates to the model replace the previous one and do not grow in complexity / size.
