@@ -130,11 +130,11 @@ class ProdSLDA(Model):
                     "label",
                     dist.Bernoulli(logits=a),  # type: ignore
                     obs=labels.T if labels is not None else None,
-                    obs_mask=torch.logical_or(
-                        self.observe_negative_labels, labels.T.bool()
-                    )
-                    if labels is not None
-                    else None,
+                    # obs_mask=torch.logical_or(
+                    #     self.observe_negative_labels, labels.T.bool()
+                    # )
+                    # if labels is not None
+                    # else None,
                     infer={"enumerate": "parallel"},
                 )
 
@@ -273,7 +273,7 @@ def retrain_model(path: Path, n=None) -> ProdSLDA:
     prodslda.run_svi(
         train_args=[train_data, train_labels],
         train_data_len=train_data.shape[0],
-        elbo=pyro.infer.TraceEnum_ELBO(num_particles=3),
+        elbo=pyro.infer.TraceGraph_ELBO(num_particles=3),
         max_epochs=500,
         batch_size=n,
     )

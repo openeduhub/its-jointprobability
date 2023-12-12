@@ -385,11 +385,11 @@ def retrain_model(
         prodslda=prodslda,
         observe_negative_labels=torch.tensor(True, device=device),
         device=device,
-        nu_loc=0.0,
-        nu_scale=10.0,
+        nu_loc=-4.0, # prior probability of about 2% to assign a discipline
+        nu_scale=5.0,
+        a_scale=2.0,
     )
 
-    pyro.set_rng_seed(1)
     num_epochs = 5
     batch_size = math.ceil(train_data.shape[-2] / num_epochs)
     batch_strategy = get_random_batch_strategy(train_data.shape[-2], batch_size)
@@ -445,10 +445,10 @@ def retrain_model_cli():
     try:
         # evaluate the newly trained model on the testing data
         print("evaluating model on test data")
-        test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
+        test_data: torch.Tensor = torch.load(path / "test_data", map_location=device).float()
         test_labels: torch.Tensor = torch.load(
             path / "test_labels", map_location=device
-        )
+        ).float()
 
         eval_model(model, test_data, test_labels, labels)
     except FileNotFoundError:
@@ -460,7 +460,7 @@ def eval_model(
     data: torch.Tensor,
     labels: torch.Tensor,
     label_values: Iterable,
-):
+) -> Quality_Result:
     ic.disable()
     samples = model.draw_posterior_samples(
         data.shape[-2], data_args=[data], return_sites=["a"], num_samples=100
@@ -471,7 +471,7 @@ def eval_model(
     by_discipline = quality_measures(
         samples,
         labels,
-        mean_dim=0,
+        mean_dim=-3,
         cutoff=global_measures.cutoff,
         parallel_dim=-1,
     )
@@ -485,6 +485,8 @@ def eval_model(
     df["count"] = labels.sum(-2).cpu()
     df = df.set_index("taxonid")
     print(df.sort_values("f1_score", ascending=False))
+
+    return by_discipline
 
 
 def import_data(
