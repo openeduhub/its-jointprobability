@@ -385,7 +385,7 @@ def retrain_model(
         prodslda=prodslda,
         observe_negative_labels=torch.tensor(True, device=device),
         device=device,
-        nu_loc=-4.0, # prior probability of about 2% to assign a discipline
+        nu_loc=-4.0,  # prior probability of about 2% to assign a discipline
         nu_scale=5.0,
         a_scale=2.0,
     )
@@ -445,7 +445,9 @@ def retrain_model_cli():
     try:
         # evaluate the newly trained model on the testing data
         print("evaluating model on test data")
-        test_data: torch.Tensor = torch.load(path / "test_data", map_location=device).float()
+        test_data: torch.Tensor = torch.load(
+            path / "test_data", map_location=device
+        ).float()
         test_labels: torch.Tensor = torch.load(
             path / "test_labels", map_location=device
         ).float()
