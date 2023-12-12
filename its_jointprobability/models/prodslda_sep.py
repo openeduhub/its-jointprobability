@@ -4,19 +4,17 @@ import argparse
 import math
 from collections.abc import Collection
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
-import nlprep.spacy.props as nlp
-import numpy as np
+import its_jointprobability.models.prodslda as prodslda_module
+import pandas as pd
 import pyro
 import pyro.distributions as dist
 import pyro.infer
 import pyro.optim
 import torch
 import torch.nn.functional as F
-import its_jointprobability.models.prodslda as prodslda_module
 from icecream import ic
-from pyro.infer.enum import partial
 from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
@@ -26,6 +24,7 @@ from its_jointprobability.utils import (
     quality_measures,
     texts_to_bow_tensor,
 )
+from pyro.infer.enum import partial
 
 path = Path.cwd() / "data"
 
@@ -419,15 +418,13 @@ def retrain_model_cli():
     args = parser.parse_args()
     model = retrain_model(Path(args.path))
 
+    labels: torch.Tensor = torch.load(path / "labels")
+
     # evaluate the newly trained model on the training data
     print("evaluating model on train data")
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
     train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
-
-    samples = model.draw_posterior_samples(
-        train_data.shape[-2], data_args=[train_data], return_sites=["a"]
-    )["a"]
-    print(quality_measures(samples, train_labels, mean_dim=0, cutoff=None))
+    eval_model(model, train_data, train_labels, labels)
 
     try:
         # evaluate the newly trained model on the testing data
@@ -437,12 +434,41 @@ def retrain_model_cli():
             path / "test_labels", map_location=device
         )
 
-        samples = model.draw_posterior_samples(
-            test_data.shape[-2], data_args=[test_data], return_sites=["a"]
-        )["a"]
-        print(quality_measures(samples, test_labels, mean_dim=0, cutoff=None))
+        eval_model(model, test_data, test_labels, labels)
     except FileNotFoundError:
         pass
+
+
+def eval_model(
+    model: Classification,
+    data: torch.Tensor,
+    labels: torch.Tensor,
+    label_values: Iterable,
+):
+    ic.disable()
+    samples = model.draw_posterior_samples(
+        data.shape[-2], data_args=[data], return_sites=["a"], num_samples=100
+    )["a"]
+    global_measures = quality_measures(samples, labels, mean_dim=0, cutoff=None)
+    print(f"global measures: {global_measures}")
+
+    by_discipline = quality_measures(
+        samples,
+        labels,
+        mean_dim=0,
+        cutoff=global_measures.cutoff,
+        parallel_dim=-1,
+    )
+    df = pd.DataFrame(
+        {
+            key: getattr(by_discipline, key).cpu()
+            for key in ["accuracy", "precision", "recall", "f1_score"]
+        }
+    )
+    df["taxonid"] = label_values
+    df["count"] = labels.sum(-2).cpu()
+    df = df.set_index("taxonid")
+    print(df.sort_values("f1_score", ascending=False))
 
 
 def import_data(
