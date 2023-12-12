@@ -10,8 +10,19 @@ This project is primarily intended to be used as a microservice through the ~nix
 
 * Utils :noexport:
 #+name: format-json
-#+begin_src sh :var result="" :results verbatim
+#+begin_src shell sh :var result="" :results verbatim
 echo $result | json
+#+end_src
+
+#+name: format-prediction
+#+begin_src python :var result="" :results verbatim output :session python-jointprobability-demo
+import json
+import pandas as pd
+result_dict = json.loads(result)
+df = pd.DataFrame.from_dict(result_dict["disciplines"]).set_index("name")
+df = df.drop("id", axis=1)
+df["prob_interval"] = df.apply(lambda x: [f"{y:g}" for y in x["prob_interval"]], axis=1)
+print(df)
 #+end_src
 
 * Usage
@@ -61,8 +72,10 @@ Finally, the Bayesian classification model is trained and saved under =classific
 :header-args: :results verbatim :exports both :post format-json(result=*this*) :wrap src json
 :END:
 
+** Ping
+
 Once the service has started, we can ping it to check that it is responding to requests:
-#+begin_src shell :post
+#+begin_src shell :post :exports both
 curl -i -X GET http://localhost:8080/_ping
 #+end_src
 
@@ -77,74 +90,465 @@ content-type: application/json
 null
 #+end_src
 
-With the =/predict_disciplines= endpoint, we can send a text to be assigned school disciplines to the model:
-#+begin_src shell
+** Discipline Prediction
+:PROPERTIES:
+:header-args: :results verbatim :exports both :post format-prediction(result=*this*) :wrap src json
+:END:
+
+With the =/predict_disciplines= endpoint, we can send a text to be assigned school disciplines to the model. For readability, we only ask for the ten most relevant disciplines.
+
+In addition to the identifiers of the predicted disciplines, we also get some diagnostics that help us understand whether this is a relevant match (in principle, all disciplines are always returned). Specifically, we gain two point-estimates (mean and median) for the probability of the discipline belonging to the given text, according to the model. We also get a credibility interval (by default 80%) on said probability.
+
+In the example below, we get only one relevant school discipline, which is also the one we would be expecting for the text (Mathematics). Because the text is relatively short, the probability of this fit is still relatively low at around 50% to 60%.
+#+begin_src shell :exports both
 curl -X 'POST' \
   'http://localhost:8080/predict_disciplines' \
   -H 'Content-Type: application/json' \
   -d '{
   "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
-  "num_predictions": "5"
+  "num_predictions": "10"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                         mean_prob  median_prob              prob_interval
+name                                                                      
+Mathematik                0.533981     0.633266      [0.0939783, 0.999957]
+Allgemein                 0.186639     0.057619     [0.00040823, 0.372796]
+Physik                    0.143448     0.021739    [2.18653e-05, 0.237755]
+Chemie                    0.050457     0.007608   [6.75526e-05, 0.0492202]
+Philosophie               0.019294     0.002541    [2.4663e-06, 0.0183403]
+Ethik                     0.020023     0.001993   [6.11797e-06, 0.0125077]
+Zeitgemäße Bildung        0.008485     0.001213     [3.05024e-06, 0.01003]
+Sport                     0.009732     0.000987  [2.34698e-06, 0.00708897]
+Interkulturelle Bildung   0.003701     0.000656  [7.53641e-06, 0.00412313]
+Religion                  0.003147     0.000533   [7.38159e-08, 0.0027953]
+#+end_src
+
+Note that these predictions are stochastic, so another run on the same text may yield slightly different predictions:
+#+begin_src shell :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "num_predictions": "10"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                    mean_prob  median_prob              prob_interval
+name                                                                 
+Mathematik           0.482000     0.425263         [0.147573, 0.9999]
+Allgemein            0.192525     0.059354    [0.000145353, 0.417362]
+Physik               0.120904     0.036702    [0.000271153, 0.197152]
+Chemie               0.041166     0.009474    [3.81706e-05, 0.069322]
+Philosophie          0.028081     0.002405   [2.09032e-05, 0.0238038]
+Ethik                0.023693     0.002022   [1.53364e-06, 0.0164551]
+Zeitgemäße Bildung   0.008686     0.001007   [2.92312e-06, 0.0121842]
+Sport                0.004411     0.000918  [1.55702e-05, 0.00478379]
+Nachhaltigkeit       0.004107     0.000580  [3.93289e-06, 0.00352898]
+Informatik           0.012629     0.000574  [4.25845e-06, 0.00625721]
+#+end_src
+
+To reduce this variance, we can increase the number of samples being drawn for the prediction. Note that the computation time is proportional to the number of such samples. By default, 100 samples are drawn.
+#+begin_src shell :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "num_predictions": "10",
+  "num_samples": "10000"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                    mean_prob  median_prob              prob_interval
+name                                                                 
+Mathematik           0.501001     0.488745             [0.0792556, 1]
+Allgemein            0.194625     0.069644    [2.09852e-06, 0.364013]
+Physik               0.130651     0.029986    [2.69876e-08, 0.202137]
+Chemie               0.039364     0.007930    [2.3178e-06, 0.0408326]
+Philosophie          0.032677     0.003970    [8.56619e-08, 0.026789]
+Ethik                0.022989     0.002175   [3.27065e-07, 0.0159774]
+Zeitgemäße Bildung   0.008423     0.001228  [3.65818e-07, 0.00722496]
+Sport                0.006127     0.000888  [4.23791e-07, 0.00518537]
+Informatik           0.004652     0.000598   [6.40031e-08, 0.0036938]
+Kunst                0.004336     0.000490   [8.76662e-08, 0.0029275]
+#+end_src
+
+** Model Updates
+:PROPERTIES:
+:header-args: :results verbatim :exports both :wrap src json
+:END:
+
+The =/update_model= or, more convenient here, the =/update_model_label= endpoints allow us to present the model with new texts together with their correct school disciplines. This allows us to correct any issues and reinforce correct predictions.
+
+*** Reinforcement
+
+In the example above, the Mathematics prediction was correct, but it is not very confident. Additionally, some irrelevant disciplines, particularly "general" should be reduced. We can achieve this by confirming the association between the text and Mathematics:
+#+name: pythagoras-update
+#+begin_src shell :post format-json(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/update_model_label' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "classification": [
+    "Mathematik"
+  ]
+}'
+#+end_src
+
+The response to our request contains some diagnostics information, that will usually not be too interesting. See the documentation in the ~Swagger~ UI for more information.
+
+#+RESULTS: pythagoras-update
+#+begin_src json
+{
+  "losses_head": [
+    60147.70883789063,
+    50882.59213867188
+  ],
+  "losses_tail": [
+    66.07891845703125,
+    72.43385009765625
+  ],
+  "num_train_iterations": 250
+}
+#+end_src
+
+Now, we can repeat our prediction request from before to confirm that the predictions changed as expected:
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "num_predictions": "10",
+  "num_samples": "10000"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                    mean_prob  median_prob              prob_interval
+name                                                                 
+Mathematik           0.549928     0.598389              [0.121828, 1]
+Allgemein            0.168058     0.055092    [6.42481e-06, 0.290507]
+Physik               0.117616     0.024223    [3.23433e-06, 0.166324]
+Chemie               0.033939     0.007008   [4.76894e-08, 0.0332964]
+Philosophie          0.028505     0.003605     [6.1553e-07, 0.021649]
+Ethik                0.022335     0.002088   [1.90215e-07, 0.0147872]
+Zeitgemäße Bildung   0.009219     0.001256  [4.97612e-07, 0.00700986]
+Sport                0.006217     0.000899  [4.17552e-07, 0.00490195]
+Informatik           0.003813     0.000606  [2.66528e-07, 0.00336288]
+Kunst                0.004123     0.000476  [1.48994e-08, 0.00281025]
+#+end_src
+
+While the difference isn't too noticeable, we can see that the confidence in the Mathematics prediction did go up slightly (from ~50% to ~60%), as did the lower bound of its credibility interval. The means of the other disciplines did not change much, but their medians decreased slightly.
+This behavior is expected, as adjusting the model too much for just one additional text may have detrimental effects on its overall performance. /From a purely mathematical point of view, the update being performed here is actually optimal (under the assumptions of the model)./
+
+Nevertheless, we can increase the effect of the new information on the model by artificially presenting it multiple times. The number of these repetitions is configurable:
+#+begin_src shell :post format-json(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/update_model_label' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "classification": [
+    "Mathematik"
+  ],
+  "num_repeats": 100,
+  "num_train_iterations": 1000
 }'
 #+end_src
 
 #+RESULTS:
 #+begin_src json
 {
-  "disciplines": [
-    {
-      "id": "http://w3id.org/openeduhub/vocabs/discipline/380",
-      "name": "Mathematik",
-      "mean_prob": 0.5111302733421326,
-      "median_prob": 0.5166749358177185,
-      "prob_interval": [
-        0.09351685643196106,
-        0.9999991655349731
-      ]
-    },
-    {
-      "id": "http://w3id.org/openeduhub/vocabs/discipline/720",
-      "name": "Allgemein",
-      "mean_prob": 0.16330379247665405,
-      "median_prob": 0.05239475518465042,
-      "prob_interval": [
-        0.00019950949354097247,
-        0.322151243686676
-      ]
-    },
-    {
-      "id": "http://w3id.org/openeduhub/vocabs/discipline/460",
-      "name": "Physik",
-      "mean_prob": 0.11668184399604797,
-      "median_prob": 0.018872441723942757,
-      "prob_interval": [
-        0.00004402317790663801,
-        0.1610020399093628
-      ]
-    },
-    {
-      "id": "http://w3id.org/openeduhub/vocabs/discipline/100",
-      "name": "Chemie",
-      "mean_prob": 0.03657418116927147,
-      "median_prob": 0.00648672366514802,
-      "prob_interval": [
-        0.00004164048004895449,
-        0.03875169903039932
-      ]
-    },
-    {
-      "id": "http://w3id.org/openeduhub/vocabs/discipline/450",
-      "name": "Philosophie",
-      "mean_prob": 0.03066890500485897,
-      "median_prob": 0.0034108771942555904,
-      "prob_interval": [
-        0.000018125687347492203,
-        0.023937467485666275
-      ]
-    }
+  "losses_head": [
+    66436.341796875,
+    57515.1234375
   ],
-  "version": "0.1.1"
+  "losses_tail": [
+    166.10333251953125,
+    169.9018981933594
+  ],
+  "num_train_iterations": 1000
 }
+#+end_src
+
+Running the prediction again, we now see that the predicted probabilities of fit have changed significantly:
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Der Satz des Pythagoras lautet: a^2 + b^2 = c^2. Er wird benutzt, um die Hypotenuse eines rechtwinkligen Dreiecks zu berechnen.",
+  "num_predictions": "10",
+  "num_samples": "10000"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                          mean_prob  median_prob              prob_interval
+name                                                                       
+Mathematik                 0.796058     0.929653               [0.58561, 1]
+Allgemein                  0.088804     0.018029    [1.37292e-06, 0.115394]
+Physik                     0.072821     0.011788   [1.53451e-06, 0.0844382]
+Chemie                     0.026400     0.005379   [4.42785e-06, 0.0256105]
+Philosophie                0.020947     0.002405    [1.10949e-06, 0.015345]
+Ethik                      0.017951     0.001553   [1.28258e-07, 0.0110781]
+Zeitgemäße Bildung         0.006773     0.000978  [2.83828e-07, 0.00536254]
+Sport                      0.005309     0.000713  [1.00147e-07, 0.00398343]
+Informatik                 0.003533     0.000588  [2.03851e-08, 0.00297268]
+Deutsch als Zweitsprache   0.003175     0.000426  [7.95945e-08, 0.00228086]
+#+end_src
+
+*** Correction
+
+One important behavior to keep in mind is the fact that extreme predictions (close to 0 or close to 1) are difficult to affect with subsequent updates.
+
+Take the following example, which we would expect to be associated only with Biology:
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "In Deutschland sind etwa 48.000 Tierarten nachgewiesen, darunter 104 Säugetier-, 328 Vogel-, 13 Reptilien-, 22 Lurch- und 197 Fischarten sowie über 33.000 Insektenarten, womit das Land „aufgrund der erdgeschichtlichen Entwicklung und der geographischen Lage zu den eher artenärmeren Gebieten“ zählt. Zu diesen Arten kommen über 1.000 Krebs-, fast 3.800 Spinnen-, 635 Weichtiere sowie über 5.300 andere Wirbellose.",
+  "num_samples": 10000,
+  "num_predictions": 10
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                                mean_prob  median_prob              prob_interval
+name                                                                             
+Ethik                            0.999807     0.999991              [0.999927, 1]
+Biologie                         0.997924     0.999951              [0.999412, 1]
+Nachhaltigkeit                   0.983105     0.999247              [0.990942, 1]
+Philosophie                      0.802286     0.911221              [0.622105, 1]
+Religion                         0.526152     0.534849       [0.192258, 0.999981]
+Allgemein                        0.095438     0.021146    [1.44855e-05, 0.130722]
+Umweltgefährdung, Umweltschutz   0.071697     0.017335   [3.51574e-06, 0.0895962]
+Kunst                            0.034965     0.005085   [2.15132e-06, 0.0311964]
+Chemie                           0.004484     0.001318  [4.86622e-06, 0.00487931]
+Zeitgemäße Bildung               0.008979     0.001085   [9.47197e-07, 0.0063772]
+#+end_src
+
+We get a very strong association with Biology (as expected), but also Ethics, Philosophy, and sustainability. Additionally, we have a relatively strong association with Religion.
+Following the example above, we try to present the model with our expected association, and immediately bias the update towards weighing this text more heavily:
+#+begin_src shell :post format-json(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/update_model_label' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "In Deutschland sind etwa 48.000 Tierarten nachgewiesen, darunter 104 Säugetier-, 328 Vogel-, 13 Reptilien-, 22 Lurch- und 197 Fischarten sowie über 33.000 Insektenarten, womit das Land „aufgrund der erdgeschichtlichen Entwicklung und der geographischen Lage zu den eher artenärmeren Gebieten“ zählt. Zu diesen Arten kommen über 1.000 Krebs-, fast 3.800 Spinnen-, 635 Weichtiere sowie über 5.300 andere Wirbellose.",
+  "classification": [
+    "Biologie"
+  ],
+  "num_repeats": 100,
+  "num_train_iterations": 1000
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+{
+  "losses_head": [
+    69637.0453125,
+    61480.4015625
+  ],
+  "losses_tail": [
+    1268.701025390625,
+    1262.995703125
+  ],
+  "num_train_iterations": 293
+}
+#+end_src
+
+One thing that we can immediately notice is that the final two losses (around 1300) are significantly higher than the final two losses in the text about Pythagoras's Theorem (around 170). This indicates that after the update, our presented data has a poorer fit for the new model.
+
+This is also confirmed when repeating the prediction -- Ethics is still very strongly associated and the association with sustainability is also still relatively high.
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "In Deutschland sind etwa 48.000 Tierarten nachgewiesen, darunter 104 Säugetier-, 328 Vogel-, 13 Reptilien-, 22 Lurch- und 197 Fischarten sowie über 33.000 Insektenarten, womit das Land „aufgrund der erdgeschichtlichen Entwicklung und der geographischen Lage zu den eher artenärmeren Gebieten“ zählt. Zu diesen Arten kommen über 1.000 Krebs-, fast 3.800 Spinnen-, 635 Weichtiere sowie über 5.300 andere Wirbellose.",
+  "num_samples": 10000,
+  "num_predictions": 10
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                                mean_prob  median_prob              prob_interval
+name                                                                             
+Biologie                         0.997700     0.999945               [0.99935, 1]
+Ethik                            0.735205     0.848476        [0.485872, 0.99993]
+Nachhaltigkeit                   0.291743     0.164975    [1.62922e-06, 0.602473]
+Philosophie                      0.182220     0.043359    [3.32468e-06, 0.327273]
+Religion                         0.131630     0.039999    [4.22947e-05, 0.202489]
+Allgemein                        0.038445     0.005234   [5.71591e-07, 0.0353267]
+Umweltgefährdung, Umweltschutz   0.029120     0.004298   [1.09187e-08, 0.0266897]
+Kunst                            0.019070     0.001802   [3.24985e-07, 0.0114808]
+Chemie                           0.003478     0.001063  [1.43775e-06, 0.00390052]
+Zeitgemäße Bildung               0.005914     0.000842  [3.55117e-07, 0.00417701]
+#+end_src
+
+While we could further improve our predictions for this specific text by repeating the update or increasing the weight of the new data, *we may inadvertently break the model*.
+
+*** Breaking the Model through Repeated Updates
+
+In the following example, we will demonstrate how repeated updates of the model for only a single text can make it perform worse on other materials. For this, we first look at the predictions of a text we would expect to be associated primarily with sustainability:
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Was bedeutet nachhaltig leben? Wie nachhaltig lebe ich? Was ist der ökologische Fussabdruck und wie können wir ihn verkleinern?.",
+  "num_predictions": "10",
+  "num_samples": "10000"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                    mean_prob  median_prob              prob_interval
+name                                                                 
+Nachhaltigkeit       0.313181     0.172469    [1.26887e-05, 0.657165]
+Ethik                0.272380     0.131670    [1.41229e-06, 0.559925]
+Allgemein            0.116919     0.037058    [6.24379e-06, 0.178623]
+Biologie             0.134619     0.036639    [1.39764e-05, 0.215113]
+Philosophie          0.075744     0.013708   [3.23827e-06, 0.0843273]
+Religion             0.036747     0.005167   [1.47353e-06, 0.0336789]
+Politik              0.033334     0.003650   [5.55479e-07, 0.0262369]
+Zeitgemäße Bildung   0.011194     0.001818  [6.89627e-07, 0.00989017]
+Wirtschaftskunde     0.010741     0.001517  [1.95444e-07, 0.00907568]
+Chemie               0.009004     0.001218  [6.03666e-08, 0.00709037]
+#+end_src
+
+Indeed, sustainability is relatively highly associated.
+
+Now, let us be particularly extreme and repeat the update for the Biology text before for 1000 times:
+#+begin_src shell :post format-json(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/update_model_label' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "In Deutschland sind etwa 48.000 Tierarten nachgewiesen, darunter 104 Säugetier-, 328 Vogel-, 13 Reptilien-, 22 Lurch- und 197 Fischarten sowie über 33.000 Insektenarten, womit das Land „aufgrund der erdgeschichtlichen Entwicklung und der geographischen Lage zu den eher artenärmeren Gebieten“ zählt. Zu diesen Arten kommen über 1.000 Krebs-, fast 3.800 Spinnen-, 635 Weichtiere sowie über 5.300 andere Wirbellose.",
+  "classification": [
+    "Biologie"
+  ],
+  "num_repeats": 1000,
+  "num_train_iterations": 1000
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+{
+  "losses_head": [
+    123025.865625,
+    128156.53828125
+  ],
+  "losses_tail": [
+    862.6956787109375,
+    872.9051513671875
+  ],
+  "num_train_iterations": 542
+}
+#+end_src
+
+We now get a strong association only in Biology, as was our goal.
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "In Deutschland sind etwa 48.000 Tierarten nachgewiesen, darunter 104 Säugetier-, 328 Vogel-, 13 Reptilien-, 22 Lurch- und 197 Fischarten sowie über 33.000 Insektenarten, womit das Land „aufgrund der erdgeschichtlichen Entwicklung und der geographischen Lage zu den eher artenärmeren Gebieten“ zählt. Zu diesen Arten kommen über 1.000 Krebs-, fast 3.800 Spinnen-, 635 Weichtiere sowie über 5.300 andere Wirbellose.",
+  "num_samples": 1000,
+  "num_predictions": 10
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                                mean_prob  median_prob              prob_interval
+name                                                                             
+Biologie                         0.998232     0.999960              [0.999502, 1]
+Ethik                            0.076738     0.045050     [0.000395999, 0.11842]
+Nachhaltigkeit                   0.035833     0.005532    [7.7996e-08, 0.0356074]
+Religion                         0.017959     0.001611    [1.05058e-06, 0.010176]
+Allgemein                        0.011938     0.001340  [1.14065e-06, 0.00794986]
+Philosophie                      0.019342     0.001319   [2.35741e-06, 0.0090548]
+Umweltgefährdung, Umweltschutz   0.007723     0.000672  [3.04479e-08, 0.00461111]
+Chemie                           0.002508     0.000666  [8.40127e-07, 0.00260428]
+Kunst                            0.004140     0.000249  [5.68308e-07, 0.00139776]
+Deutsch als Zweitsprache         0.001537     0.000248  [7.03261e-08, 0.00121754]
+#+end_src
+
+However, if we now repeat the prediction again on the text on sustainability, we see that disciplines except for Biology have decreased in relevance significantly:
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Was bedeutet nachhaltig leben? Wie nachhaltig lebe ich? Was ist der ökologische Fussabdruck und wie können wir ihn verkleinern?.",
+  "num_predictions": "10",
+  "num_samples": "1000"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                    mean_prob  median_prob              prob_interval
+name                                                                 
+Biologie             0.119677     0.040322    [0.000203122, 0.169896]
+Allgemein            0.032774     0.008938    [4.88949e-05, 0.038369]
+Nachhaltigkeit       0.031543     0.003318   [1.26505e-05, 0.0173978]
+Mathematik           0.009267     0.002889  [2.65772e-05, 0.00862055]
+Politik              0.010646     0.001619   [6.0585e-06, 0.00708547]
+Wirtschaftskunde     0.004716     0.001466  [2.47292e-05, 0.00499307]
+Zeitgemäße Bildung   0.002015     0.001142  [8.08725e-05, 0.00267617]
+Sport                0.001464     0.000880   [6.6421e-05, 0.00210409]
+Informatik           0.001772     0.000852  [1.32953e-05, 0.00205338]
+Philosophie          0.002839     0.000685  [2.82573e-05, 0.00207805]
+#+end_src
+
+For comparison, this is the result if we had only run the update for the Biology text only 25 times:
+#+begin_src shell :post format-prediction(result=*this*) :exports both
+curl -X 'POST' \
+  'http://localhost:8080/predict_disciplines' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "text": "Was bedeutet nachhaltig leben? Wie nachhaltig lebe ich? Was ist der ökologische Fussabdruck und wie können wir ihn verkleinern?.",
+  "num_predictions": "10",
+  "num_samples": "10000"
+}'
+#+end_src
+
+#+RESULTS:
+#+begin_src json
+                    mean_prob  median_prob              prob_interval
+name                                                                 
+Ethik                0.143275     0.046498    [8.51668e-05, 0.226321]
+Nachhaltigkeit       0.150946     0.039127      [9.09642e-06, 0.2334]
+Biologie             0.119643     0.036004    [2.15859e-05, 0.174568]
+Allgemein            0.077771     0.027240    [0.000109089, 0.101442]
+Philosophie          0.031903     0.004674   [5.38474e-06, 0.0234543]
+Politik              0.023010     0.003436       [1.0039e-06, 0.0171]
+Religion             0.014883     0.002758    [3.11458e-06, 0.012192]
+Zeitgemäße Bildung   0.006024     0.001938  [1.23564e-05, 0.00698446]
+Wirtschaftskunde     0.007034     0.001454  [3.50556e-06, 0.00617994]
+Chemie               0.009310     0.001277  [3.11691e-07, 0.00691288]
 #+end_src
 
 * Notes / Limitations
