@@ -69,7 +69,7 @@ Finally, the Bayesian classification model is trained and saved under =classific
 
 * Features & Demo of the Service
 :PROPERTIES:
-:header-args: :results verbatim :exports both :post format-json(result=*this*) :wrap src json
+:header-args: :results verbatim :exports both :post format-json(result=*this*) :wrap src
 :END:
 
 ** Ping
@@ -80,7 +80,7 @@ curl -i -X GET http://localhost:8080/_ping
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
 HTTP/1.1 200 OK
 date: Tue, 12 Dec 2023 13:13:26 GMT
 server: uvicorn
@@ -92,7 +92,7 @@ null
 
 ** Discipline Prediction
 :PROPERTIES:
-:header-args: :results verbatim :exports both :post format-prediction(result=*this*) :wrap src json
+:header-args: :results verbatim :exports both :post format-prediction(result=*this*) :wrap src
 :END:
 
 With the =/predict_disciplines= endpoint, we can send a text to be assigned school disciplines to the model. For readability, we only ask for the ten most relevant disciplines.
@@ -111,7 +111,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                          mean_prob  median_prob              prob_interval
 name                                                                      
 Mathematik                0.533981     0.633266      [0.0939783, 0.999957]
@@ -138,7 +138,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                     mean_prob  median_prob              prob_interval
 name                                                                 
 Mathematik           0.482000     0.425263         [0.147573, 0.9999]
@@ -166,7 +166,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                     mean_prob  median_prob              prob_interval
 name                                                                 
 Mathematik           0.501001     0.488745             [0.0792556, 1]
@@ -183,7 +183,7 @@ Kunst                0.004336     0.000490   [8.76662e-08, 0.0029275]
 
 ** Model Updates
 :PROPERTIES:
-:header-args: :results verbatim :exports both :wrap src json
+:header-args: :results verbatim :exports both :wrap src
 :END:
 
 The =/update_model= or, more convenient here, the =/update_model_label= endpoints allow us to present the model with new texts together with their correct school disciplines. This allows us to correct any issues and reinforce correct predictions.
@@ -234,7 +234,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                     mean_prob  median_prob              prob_interval
 name                                                                 
 Mathematik           0.549928     0.598389              [0.121828, 1]
@@ -295,7 +295,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                           mean_prob  median_prob              prob_interval
 name                                                                       
 Mathematik                 0.796058     0.929653               [0.58561, 1]
@@ -327,7 +327,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                                 mean_prob  median_prob              prob_interval
 name                                                                             
 Ethik                            0.999807     0.999991              [0.999927, 1]
@@ -388,7 +388,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                                 mean_prob  median_prob              prob_interval
 name                                                                             
 Biologie                         0.997700     0.999945               [0.99935, 1]
@@ -420,7 +420,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                     mean_prob  median_prob              prob_interval
 name                                                                 
 Nachhaltigkeit       0.313181     0.172469    [1.26887e-05, 0.657165]
@@ -480,7 +480,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src
                                 mean_prob  median_prob              prob_interval
 name                                                                             
 Biologie                         0.998232     0.999960              [0.999502, 1]
@@ -508,7 +508,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src 
                     mean_prob  median_prob              prob_interval
 name                                                                 
 Biologie             0.119677     0.040322    [0.000203122, 0.169896]
@@ -536,7 +536,7 @@ curl -X 'POST' \
 #+end_src
 
 #+RESULTS:
-#+begin_src json
+#+begin_src 
                     mean_prob  median_prob              prob_interval
 name                                                                 
 Ethik                0.143275     0.046498    [8.51668e-05, 0.226321]
