@@ -461,7 +461,7 @@ def eval_model(
     )
     df = pd.DataFrame(
         {
-            key: getattr(by_discipline, key).cpu()
+            key: getattr(by_discipline, key)
             for key in ["accuracy", "precision", "recall", "f1_score"]
         }
     )
