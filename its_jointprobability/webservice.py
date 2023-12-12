@@ -3,6 +3,7 @@ import argparse
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 import pyro.ops.stats
 import torch
@@ -66,6 +67,7 @@ def main():
         num_samples: int = Field(
             default=100 if not debug else 2, gt=1, le=1000 if not debug else 10
         )
+        num_predictions: Optional[int] = None
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)
 
     # classes that define interfaces for the API
@@ -169,6 +171,9 @@ def main():
                 reverse=True,
             )
 
+            if inp.num_predictions is not None:
+                disciplines = disciplines[: inp.num_predictions]
+
             return Prediction_Result(disciplines=disciplines)
 
         def update_model(self, inp: Update_Input_URI) -> Update_Output:
@@ -247,6 +252,10 @@ def main():
                     fit of each discipline.
                     Higher numbers will result in less variance between calls,
                     but take more time.
+                num_predictions : None | int
+                    The number of predicted disciplines (sorted by relevance)
+                    to return.
+                    If None, return all disciplines.
                 interval_size : float (0, 1]
                     The size of the credibility interval for the probability
                     that a discipline is assigned to the given text.
