@@ -59,6 +59,7 @@
         python-packages-build = py-pkgs:
           with py-pkgs; [
             setuptools
+            pandas
             uvicorn
             pydantic
             fastapi
