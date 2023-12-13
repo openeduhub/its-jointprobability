@@ -555,7 +555,7 @@ Chemie               0.009310     0.001277  [3.11691e-07, 0.00691288]
 
 ** Model Updates
 
-The updates to the Bayesian model through the service are stored on the *RAM only*. Thus, they will not persist through restarts.
+The updates to the Bayesian model through the service are stored on the *RAM only*. Thus, they will not persist through restarts. However, it would be trivial to add functionality to export the current model in the future.
 
 ** RAM Usage
 
