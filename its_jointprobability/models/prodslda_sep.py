@@ -4,7 +4,7 @@ import argparse
 import math
 from collections.abc import Collection
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 import its_jointprobability.models.prodslda as prodslda_module
 import pandas as pd
@@ -15,13 +15,12 @@ import pyro.optim
 import torch
 import torch.nn.functional as F
 from icecream import ic
-from its_jointprobability.models.model import Simple_Model
+from its_jointprobability.models.model import Simple_Model, eval_model
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
     batch_to_list,
     device,
     get_random_batch_strategy,
-    quality_measures,
     texts_to_bow_tensor,
 )
 from pyro.infer.enum import partial
@@ -455,40 +454,6 @@ def retrain_model_cli():
         eval_model(model, test_data, test_labels, labels)
     except FileNotFoundError:
         pass
-
-
-def eval_model(
-    model: Classification,
-    data: torch.Tensor,
-    labels: torch.Tensor,
-    label_values: Iterable,
-) -> Quality_Result:
-    ic.disable()
-    samples = model.draw_posterior_samples(
-        data.shape[-2], data_args=[data], return_sites=["a"], num_samples=100
-    )["a"]
-    global_measures = quality_measures(samples, labels, mean_dim=0, cutoff=None)
-    print(f"global measures: {global_measures}")
-
-    by_discipline = quality_measures(
-        samples,
-        labels,
-        mean_dim=-3,
-        cutoff=global_measures.cutoff,
-        parallel_dim=-1,
-    )
-    df = pd.DataFrame(
-        {
-            key: getattr(by_discipline, key)
-            for key in ["accuracy", "precision", "recall", "f1_score"]
-        }
-    )
-    df["taxonid"] = label_values
-    df["count"] = labels.sum(-2).cpu()
-    df = df.set_index("taxonid")
-    print(df.sort_values("f1_score", ascending=False))
-
-    return by_discipline
 
 
 def import_data(

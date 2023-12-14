@@ -1,22 +1,25 @@
 import math
 from abc import abstractmethod
 from collections import deque
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from typing import Any, Optional
 
 import numpy as np
+import pandas as pd
 import pyro
 import pyro.infer
 import pyro.optim
 import torch
-from pyro.nn.module import PyroModule
-from tqdm import tqdm, trange
+import torch.nn as nn
+from icecream import ic
 from its_jointprobability.utils import (
+    Quality_Result,
+    batch_to_list,
     get_random_batch_strategy,
     get_sequential_batch_strategy,
-    batch_to_list,
+    quality_measures,
 )
-from icecream import ic
+from tqdm import tqdm, trange
 
 
 class Simple_Model:
@@ -192,7 +195,7 @@ class Simple_Model:
         return self.clean_up_posterior_samples(posterior_samples)
 
 
-class Model(Simple_Model, PyroModule):
+class Model(Simple_Model, nn.Module):
     """A Bayesian model that relies on a neural network."""
 
     def run_svi(self, *args, **kwargs) -> list[float]:
@@ -202,3 +205,38 @@ class Model(Simple_Model, PyroModule):
     def draw_posterior_samples(self, *args, **kwargs) -> dict[str, torch.Tensor]:
         self.eval()
         return super().draw_posterior_samples(*args, **kwargs)
+
+
+def eval_model(
+    model: Simple_Model,
+    data: torch.Tensor,
+    labels: torch.Tensor,
+    label_values: Iterable,
+    site="a",
+) -> Quality_Result:
+    ic.disable()
+    samples = model.draw_posterior_samples(
+        data.shape[-2], data_args=[data], return_sites=[site], num_samples=100
+    )[site]
+    global_measures = quality_measures(samples, labels, mean_dim=0, cutoff=None)
+    print(f"global measures: {global_measures}")
+
+    by_discipline = quality_measures(
+        samples,
+        labels,
+        mean_dim=-3,
+        cutoff=global_measures.cutoff,
+        parallel_dim=-1,
+    )
+    df = pd.DataFrame(
+        {
+            key: getattr(by_discipline, key)
+            for key in ["accuracy", "precision", "recall", "f1_score"]
+        }
+    )
+    df["taxonid"] = label_values
+    df["count"] = labels.sum(-2).cpu()
+    df = df.set_index("taxonid")
+    print(df.sort_values("f1_score", ascending=False))
+
+    return by_discipline
