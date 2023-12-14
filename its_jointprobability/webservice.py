@@ -67,7 +67,7 @@ def main():
         num_samples: int = Field(
             default=100 if not debug else 2, gt=1, le=100000 if not debug else 10
         )
-        num_predictions: Optional[int] = None
+        num_predictions: int = Field(default=len(uris), gt=0, le=len(uris))
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)
 
     # classes that define interfaces for the API
@@ -108,12 +108,12 @@ def main():
         text: str
         classification: list[Disciplines_Enum]
         learning_rate: float = Field(default=1.0, le=1.0, gt=0.0)
-        gamma: float = Field(default=0.001, le=1.0, gt=0.0)
-        num_repeats: int = Field(default=10, gt=0, le=1000 if not debug else 10)
+        gamma: float = Field(default=0.01, le=1.0, gt=0.0)
+        num_repeats: int = Field(default=10, gt=0, le=100 if not debug else 10)
         num_train_iterations: int = Field(
-            default=250 if not debug else 1,
-            ge=200 if not debug else 1,
-            le=1000 if not debug else 50,
+            default=1000 if not debug else 1,
+            ge=250 if not debug else 1,
+            le=10000 if not debug else 50,
         )
         num_losses_head: int = Field(default=2, gt=0)
         num_losses_tail: int = Field(default=2, gt=0)
@@ -169,10 +169,7 @@ def main():
                 ],
                 key=lambda x: x.median_prob,
                 reverse=True,
-            )
-
-            if inp.num_predictions is not None:
-                disciplines = disciplines[: inp.num_predictions]
+            )[: inp.num_predictions]
 
             return Prediction_Result(disciplines=disciplines)
 
@@ -252,10 +249,9 @@ def main():
                     fit of each discipline.
                     Higher numbers will result in less variance between calls,
                     but take more time.
-                num_predictions : None | int
+                num_predictions : int
                     The number of predicted disciplines (sorted by relevance)
                     to return.
-                    If None, return all disciplines.
                 interval_size : float (0, 1]
                     The size of the credibility interval for the probability
                     that a discipline is assigned to the given text.
