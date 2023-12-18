@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import its_jointprobability.models.prodslda as prodslda_module
+import matplotlib.pyplot as plt
 import pandas as pd
 import pyro
 import pyro.distributions as dist
@@ -18,6 +19,7 @@ from icecream import ic
 from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
+    Quality_Result,
     batch_to_list,
     device,
     get_random_batch_strategy,
@@ -61,6 +63,8 @@ class Classification(Simple_Model):
         self.prodlda_logtheta_params = pyro.poutine.block(prodslda.logtheta_params)
         self.prodlda_clean_up_posterior_samples = prodslda.clean_up_posterior_samples
         self.device = device
+
+        self.accuracies = []
 
     def logtheta_prior(
         self,
@@ -308,7 +312,7 @@ class Classification(Simple_Model):
         num_particles=3,
         *args,
         **kwargs,
-    ) -> list[float]:
+    ):
         """
         Update this model inplace using the given documents and their discipline assignments.
         """
@@ -319,7 +323,7 @@ class Classification(Simple_Model):
         # run svi on the given data
         param_store = pyro.get_param_store()
         with param_store.scope() as svi:
-            losses = self.run_svi(
+            self.run_svi(
                 elbo=elbo,
                 train_data_len=docs.shape[-2],
                 train_args=[docs, labels],
@@ -339,8 +343,6 @@ class Classification(Simple_Model):
         # no longer use the posterior distribution in the predictive
         self.predictive = self.model_predictive
 
-        return losses
-
     def model_predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
         """
         Only draw samples from the model (not the guide).
@@ -351,12 +353,34 @@ class Classification(Simple_Model):
         """
         return pyro.infer.Predictive(model=self.model, *args, **kwargs)
 
+    def calculate_accuracy(
+        self, docs: torch.Tensor, labels: torch.Tensor, batch_size: Optional[int] = None
+    ) -> float:
+        return quality_measures(
+            self.draw_posterior_samples(
+                docs.shape[-2],
+                data_args=[docs],
+                num_samples=10,
+                batch_size=batch_size if batch_size is not None else docs.shape[-2],
+                return_sites=["label"],
+                progress_bar=False,
+            )["label"],
+            labels=labels,
+            cutoff=0.2,
+        ).accuracy  # type: ignore
+
+    def append_to_accuracies_(
+        self, docs: torch.Tensor, labels: torch.Tensor, batch_size: Optional[int] = None
+    ) -> None:
+        self.accuracies.append(self.calculate_accuracy(docs, labels, batch_size))
+
 
 def retrain_model(
     path: Path,
     clear_store=True,
     prodslda: Optional[ProdSLDA] = None,
     seed: Optional[int] = None,
+    **kwargs,
 ) -> Classification:
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
     train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
@@ -407,6 +431,7 @@ def retrain_model(
                 num_particles=8,
                 max_epochs=250,
                 batch_size=docs_batch.shape[-2],
+                **kwargs,
             )
 
     torch.save(model, path / "classification")
@@ -428,18 +453,41 @@ def retrain_model_cli():
         default=0,
         help="The seed to use for pseudo random number generation",
     )
+    parser.add_argument("--plot", action="store_true")
 
     ic.disable()
 
     args = parser.parse_args()
-    model = retrain_model(Path(args.path), seed=args.seed)
+
+    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
+    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+
+    model = retrain_model(
+        Path(args.path),
+        seed=args.seed,
+        callback=(
+            lambda x: x.append_to_accuracies_(
+                docs=train_data, labels=train_labels.swapaxes(-1, -2), batch_size=None
+            )
+        )
+        if args.plot
+        else None,
+        keep_prev_losses=True,
+    )
+
+    if args.plot:
+        fig = plt.figure()
+        ax1 = fig.add_subplot(2, 1, 1)
+        ax1.plot(model.losses)
+        ax2 = fig.add_subplot(2, 1, 2)
+        ax2.plot(model.accuracies)
+
+        plt.show()
 
     labels: torch.Tensor = torch.load(path / "labels")
 
     # evaluate the newly trained model on the training data
     print("evaluating model on train data")
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
     eval_model(model, train_data, train_labels, labels)
 
     try:

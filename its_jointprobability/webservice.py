@@ -188,7 +188,7 @@ def main():
                     losses_head=[], losses_tail=[], num_train_iterations=0
                 )
 
-            losses = self.model.bayesian_update(
+            model.bayesian_update(
                 docs=bows_tensor,
                 labels=labels_tensor,
                 num_particles=10,
@@ -197,6 +197,7 @@ def main():
                 initial_lr=inp.learning_rate,
             )
 
+            losses = model.losses
             losses_tail = losses[-inp.num_losses_tail :]
             losses_head = losses[: inp.num_losses_head]
 

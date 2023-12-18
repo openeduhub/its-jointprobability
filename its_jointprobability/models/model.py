@@ -1,22 +1,23 @@
+from __future__ import annotations
+
 import math
 from abc import abstractmethod
 from collections import deque
 from collections.abc import Callable, Collection, Iterator
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import pyro
 import pyro.infer
 import pyro.optim
 import torch
-from pyro.nn.module import PyroModule
-from tqdm import tqdm, trange
 from its_jointprobability.utils import (
+    batch_to_list,
     get_random_batch_strategy,
     get_sequential_batch_strategy,
-    batch_to_list,
 )
-from icecream import ic
+from pyro.nn.module import PyroModule
+from tqdm import tqdm, trange
 
 
 class Simple_Model:
@@ -47,7 +48,7 @@ class Simple_Model:
         self,
         elbo: pyro.infer.ELBO,
         train_data_len: int,
-        train_args: Optional[Collection[Any]] = None,
+        train_args: Optional[Sequence[Any]] = None,
         train_kwargs: Optional[dict[str, Any]] = None,
         batch_strategy_factory: Optional[
             Callable[[int, int], Iterator[tuple[bool, Collection[int]]]]
@@ -61,14 +62,14 @@ class Simple_Model:
         min_rel_std: float = 0.01,
         z_score_num: int = 10,
         min_z_score: float = 1.0,
-    ) -> list[float]:
-        """
-        Run stochastic variational inference.
+        keep_prev_losses: bool = False,
+        callback: Optional[Callable[[Simple_Model], None]] = None,
+    ) -> None:
+        """Run stochastic variational inference."""
 
-        Returns
-        -------
-        The list of losses
-        """
+        if not hasattr(self, "losses") or not keep_prev_losses:
+            self.losses = list()
+
         train_args = train_args or list()
         train_kwargs = train_kwargs or dict()
 
@@ -80,8 +81,6 @@ class Simple_Model:
                     min(1000, train_data_len),
                 ),
             )
-
-        ic(batch_size)
 
         batches_per_epoch = math.ceil(train_data_len / batch_size)
         optim = pyro.optim.ClippedAdam(
@@ -100,7 +99,6 @@ class Simple_Model:
         else:
             batch_strategy = batch_strategy_factory(train_data_len, batch_size)
 
-        losses = list()
         # collect the last z-scores using a ring buffer
         z_scores = deque(maxlen=z_score_num)
 
@@ -120,16 +118,20 @@ class Simple_Model:
                     break
 
             loss = np.mean(batch_losses)
-            losses.append(loss)
+            self.losses.append(loss)
+
+            # calculate the accuracy of one posterior sample
+            if callback is not None:
+                callback(self)
 
             # compute the last z-score
-            mean = np.mean(losses[-z_score_num:])
-            std = np.std(losses[-z_score_num:])
+            mean = np.mean(self.losses[-z_score_num:])
+            std = np.std(self.losses[-z_score_num:])
             rel_std = np.abs(std / mean)  # type: ignore
-            z_scores.append(np.abs((losses[-1] - mean) / std))
+            z_scores.append(np.abs((self.losses[-1] - mean) / std))
 
             epochs.set_postfix(
-                epoch_loss=f"{losses[-1]:.2e}", z_score=f"{z_scores[-1]:.2f}"
+                epoch_loss=f"{self.losses[-1]:.2e}", z_score=f"{z_scores[-1]:.2f}"
             )
 
             if (
@@ -139,8 +141,6 @@ class Simple_Model:
             ):
                 break
 
-        return losses
-
     def predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
         """Return a Predictive object in order to generate posterior samples."""
         return pyro.infer.Predictive(self.model, guide=self.guide, *args, **kwargs)
@@ -148,12 +148,13 @@ class Simple_Model:
     def draw_posterior_samples(
         self,
         data_len: int,
-        data_args: Optional[list[Any]] = None,
+        data_args: Optional[Sequence[Any]] = None,
         data_kwargs: Optional[dict[str, Any]] = None,
         num_samples: int = 100,
         parallel_sample: bool = False,
         batch_size: int = 1000,
         return_sites: Optional[Collection[str]] = None,
+        progress_bar: bool = True,
     ) -> dict[str, torch.Tensor]:
         """Draw posterior samples from this model."""
         return_sites = return_sites if return_sites is not None else self.return_sites
@@ -168,7 +169,13 @@ class Simple_Model:
 
         posterior_samples = None
         # draw from the posterior in batches
-        for batch in tqdm(batch_to_list(batch_strategy), desc="posterior sample"):
+        batches = batch_to_list(batch_strategy)
+        if progress_bar:
+            bar = tqdm(batches, desc="posterior sample")
+        else:
+            bar = batches
+
+        for batch in bar:
             with torch.no_grad():
                 posterior_batch: dict[str, torch.Tensor] = predictive(
                     *data_args, batch=batch, **data_kwargs
@@ -179,7 +186,6 @@ class Simple_Model:
 
             else:
                 for key in posterior_samples.keys():
-                    ic(posterior_batch[key].shape)
                     posterior_samples[key] = torch.cat(
                         [posterior_samples[key], posterior_batch[key]],
                         dim=self.return_site_cat_dim[key],
@@ -195,9 +201,9 @@ class Simple_Model:
 class Model(Simple_Model, PyroModule):
     """A Bayesian model that relies on a neural network."""
 
-    def run_svi(self, *args, **kwargs) -> list[float]:
+    def run_svi(self, *args, **kwargs) -> None:
         self.train()
-        return super().run_svi(*args, **kwargs)
+        super().run_svi(*args, **kwargs)
 
     def draw_posterior_samples(self, *args, **kwargs) -> dict[str, torch.Tensor]:
         self.eval()

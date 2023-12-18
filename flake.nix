@@ -65,6 +65,7 @@
             fastapi
             pyro-ppl
             icecream
+            matplotlib
             (self.inputs.nlprep.lib.${system}.nlprep py-pkgs) # nlp pre-processing
           ];
 
