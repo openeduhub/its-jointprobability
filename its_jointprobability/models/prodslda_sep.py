@@ -360,13 +360,13 @@ class Classification(Simple_Model):
             self.draw_posterior_samples(
                 docs.shape[-2],
                 data_args=[docs],
-                num_samples=10,
+                num_samples=1,
                 batch_size=batch_size if batch_size is not None else docs.shape[-2],
                 return_sites=["label"],
                 progress_bar=False,
             )["label"],
             labels=labels,
-            cutoff=0.2,
+            cutoff=1.,
         ).accuracy  # type: ignore
 
     def append_to_accuracies_(
@@ -465,6 +465,8 @@ def retrain_model_cli():
     model = retrain_model(
         Path(args.path),
         seed=args.seed,
+        # if plotting the training process,
+        # calculate the training data accuracy after every epoch
         callback=(
             lambda x: x.append_to_accuracies_(
                 docs=train_data, labels=train_labels.swapaxes(-1, -2), batch_size=None
@@ -476,13 +478,20 @@ def retrain_model_cli():
     )
 
     if args.plot:
-        fig = plt.figure()
+        fig = plt.figure(figsize=(16, 9), dpi=100)
         ax1 = fig.add_subplot(2, 1, 1)
         ax1.plot(model.losses)
+        ax1.set_yscale("symlog")
+        ax1.set_title("Loss function")
+        ax1.set_ylabel("Negative ELBO")
         ax2 = fig.add_subplot(2, 1, 2)
         ax2.plot(model.accuracies)
+        ax2.set_yscale("symlog")
+        ax2.set_title("Training set accuracy")
+        ax2.set_xlabel("Training epoch")
+        ax2.set_ylabel("Accuracy")
 
-        plt.show()
+        fig.savefig("./training_process.png")
 
     labels: torch.Tensor = torch.load(path / "labels")
 
