@@ -17,6 +17,7 @@ setup(
         "console_scripts": [
             "its-jointprobability = its_jointprobability.webservice:main",
             "retrain-model = its_jointprobability.models.prodslda_sep:retrain_model_cli",
+            "retrain-model-semi-supervised = its_jointprobability.models.semi_supervised_vae:retrain_model_cli",
         ]
     },
 )
