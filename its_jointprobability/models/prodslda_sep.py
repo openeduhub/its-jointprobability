@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -27,6 +27,7 @@ from its_jointprobability.utils import (
     texts_to_bow_tensor,
 )
 from pyro.infer.enum import partial
+from tqdm import tqdm
 
 path = Path.cwd() / "data"
 
@@ -366,7 +367,7 @@ class Classification(Simple_Model):
                 progress_bar=False,
             )["label"],
             labels=labels,
-            cutoff=1.,
+            cutoff=1.0,
         ).accuracy  # type: ignore
 
     def append_to_accuracies_(
@@ -560,6 +561,122 @@ def import_data(
     uris = torch.load(path / "uris")
 
     return classification, dictionary, labels, uris
+
+
+def compare_to_wlo_classification(path: Path):
+    import shelve
+    import requests
+
+    classification, dictionary, label_values, uris = import_data(path)
+    prodslda = torch.load(path / "prodslda", map_location=device)
+    test_data: torch.Tensor = torch.load(
+        path / "test_data", map_location=device
+    ).float()
+    test_labels: torch.Tensor = torch.load(
+        path / "test_labels", map_location=device
+    ).float()
+    train_data: torch.Tensor = torch.load(
+        path / "train_data", map_location=device
+    ).float()
+    train_labels: torch.Tensor = torch.load(
+        path / "train_labels", map_location=device
+    ).float()
+
+    comps = []
+
+    for data, labels in zip((test_data, train_data), (test_labels, train_labels)):
+        api_url = "http://localhost:8080/predict_subjects"
+        wlo_cls = list()
+        with shelve.open(str(path / "wlo-classification")) as db:
+            for bow in tqdm(data):
+                ids = torch.repeat_interleave(bow.int())
+                tokens = [dictionary[int(index)] for index in ids]
+                text = " ".join(tokens)
+
+                if text in db:
+                    wlo_cls.append(db[text])
+                    continue
+
+                r = requests.post(api_url, json={"text": " ".join(tokens)})
+                if r.ok:
+                    prediction = r.json()["disciplines"]
+                else:
+                    prediction = []
+
+                db[text] = prediction
+                wlo_cls.append(prediction)
+
+        wlo_cls_labels = [
+            [
+                "http://w3id.org/openeduhub/vocabs/discipline/" + value["id"]
+                for value in entry
+            ]
+            for entry in wlo_cls
+        ]
+
+        uris_set = set(uris)
+
+        wlo_cls_indices = [
+            [uris.index(value) for value in entry if value in uris_set]
+            for entry in wlo_cls_labels
+        ]
+
+        n = len(uris_set)
+        wlo_cls_tensor = torch.stack(
+            [
+                torch.stack([F.one_hot(torch.tensor(value), n) for value in entry]).sum(
+                    0
+                )
+                if len(entry) > 0
+                else torch.zeros(n)
+                for entry in wlo_cls_indices
+            ]
+        )
+
+        qualities_wlo_cls = quality_measures(
+            wlo_cls_tensor.unsqueeze(0), labels, cutoff=1, parallel_dim=-1
+        )
+
+        samples = prodslda.draw_posterior_samples(
+            len(data), data_args=[data], return_sites=["a"]
+        )["a"]
+
+        qualities_new = quality_measures(
+            samples,
+            labels,
+            mean_dim=0,
+            parallel_dim=-1,
+        )
+
+        def qualitiy_measure_df(quality_measures: Quality_Result) -> pd.DataFrame:
+            return (
+                pd.DataFrame(
+                    {
+                        "taxonid": label_values,
+                        "accuracy": quality_measures.accuracy,
+                        "precision": quality_measures.precision,
+                        "recall": quality_measures.recall,
+                        "f1-score": quality_measures.f1_score,
+                        "count": labels.sum(-2),
+                    }
+                )
+                .set_index("taxonid")
+                .fillna(0)
+            )
+
+        df_wlo_cls = qualitiy_measure_df(qualities_wlo_cls)
+        df_wlo_cls["preds old"] = -wlo_cls_tensor.sum(-2)
+        df_wlo_cls["preds new"] = 0
+        df_new = qualitiy_measure_df(qualities_new)
+        df_new["preds old"] = 0
+        df_new["preds new"] = (samples.mean(0) > qualities_new.cutoff).sum(-2)
+
+        df_new["count"] *= 2
+        comp = (df_new - df_wlo_cls).sort_values("f1-score", ascending=False)
+        comps.append(comp)
+        print(comp)
+
+    return comps
 
 
 if __name__ == "__main__":
