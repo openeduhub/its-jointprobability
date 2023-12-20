@@ -262,8 +262,8 @@ def retrain_model(path: Path, n=None) -> ProdSLDA:
     prodslda = ProdSLDA(
         voc_size=train_data.shape[-1],
         label_size=train_labels.shape[-1],
-        num_topics=100,
-        layers=50,
+        num_topics=400,
+        layers=200,
         dropout=0.2,
         nu_loc=0.0,
         nu_scale=10.0,
@@ -274,7 +274,7 @@ def retrain_model(path: Path, n=None) -> ProdSLDA:
         train_args=[train_data, train_labels],
         train_data_len=train_data.shape[0],
         elbo=pyro.infer.TraceGraph_ELBO(num_particles=3),
-        max_epochs=500,
+        max_epochs=1000,
         batch_size=n,
     )
 
