@@ -184,7 +184,6 @@ class Classification(Simple_Model):
     ) -> torch.Tensor:
         num_full_data = docs.shape[0]
 
-
         if batch is not None:
             batch_size = len(batch)
             docs = docs[list(batch)].float()
@@ -192,8 +191,7 @@ class Classification(Simple_Model):
         else:
             batch_size = num_full_data
             docs = docs.float()
-            labels = labels.float()
-
+            labels = labels.float() if labels is not None else None
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
@@ -235,7 +233,6 @@ class Classification(Simple_Model):
 
         num_full_data = docs.shape[0]
 
-
         if batch is not None:
             batch_size = len(batch)
             docs = docs[list(batch)].float()
@@ -243,7 +240,7 @@ class Classification(Simple_Model):
         else:
             batch_size = num_full_data
             docs = docs.float()
-            labels = labels.float()
+            labels = labels.float() if labels is not None else None
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
@@ -486,7 +483,6 @@ def retrain_model_cli():
     )
     prodslda = torch.load(path / "prodslda", map_location=device)
 
-
     if args.plot:
         fig = plt.figure(figsize=(16, 9), dpi=100)
         ax1 = fig.add_subplot(2, 1, 1)
@@ -566,24 +562,25 @@ def eval_model(
 
 def import_data(
     path: Path,
-) -> tuple[Classification, dict[int, str], list[str], list[str]]:
+) -> tuple[Classification, dict[int, str], list[str], dict[str, str]]:
     classification = torch.load(path / "classification", map_location=device)
     # ensure that the model is running on the correct device
     # this does not get changed by setting the map location above
     classification.device = device
     dictionary = torch.load(path / "dictionary")
-    labels = torch.load(path / "labels")
     uris = torch.load(path / "uris")
+    uri_title_dict = torch.load(path / "uri_title_dict")
 
-    return classification, dictionary, labels, uris
+    return classification, dictionary, uris, uri_title_dict
 
 
 def compare_to_wlo_classification(path: Path):
     import shelve
     import requests
 
-    classification, dictionary, label_values, uris = import_data(path)
-    prodslda = torch.load(path / "prodslda", map_location=device)
+    classification, dictionary, uris, uri_title_dict = import_data(path)
+    title_values = [uri_title_dict[uri] for uri in uris]
+
     test_data: torch.Tensor = torch.load(
         path / "test_data", map_location=device
     ).float()
@@ -652,7 +649,7 @@ def compare_to_wlo_classification(path: Path):
             wlo_cls_tensor.unsqueeze(0), labels, cutoff=1, parallel_dim=-1
         )
 
-        samples = prodslda.draw_posterior_samples(
+        samples = classification.draw_posterior_samples(
             len(data), data_args=[data], return_sites=["a"]
         )["a"]
 
@@ -667,7 +664,7 @@ def compare_to_wlo_classification(path: Path):
             return (
                 pd.DataFrame(
                     {
-                        "taxonid": label_values,
+                        "taxonid": title_values,
                         "accuracy": quality_measures.accuracy,
                         "precision": quality_measures.precision,
                         "recall": quality_measures.recall,

@@ -43,7 +43,8 @@ def main():
 
     # import the model and auxiliary data
     data_dir = Path.cwd() / "data"
-    model, dictionary, disciplines_raw, uris_raw = import_data(data_dir)
+    model, dictionary, uris_raw, uri_title_dict = import_data(data_dir)
+    disciplines_raw = [uri_title_dict[uri] for uri in uris_raw]
 
     # collect the possible discipline values in an Enum
     Disciplines_Enum = Enum(
