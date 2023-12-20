@@ -415,7 +415,7 @@ def retrain_model(
         a_scale=2.0,
     )
 
-    num_epochs = 5
+    num_epochs = math.ceil(train_data.shape[-2] / 1000)
     batch_size = math.ceil(train_data.shape[-2] / num_epochs)
     batch_strategy = get_random_batch_strategy(train_data.shape[-2], batch_size)
 
@@ -477,6 +477,8 @@ def retrain_model_cli():
         else None,
         keep_prev_losses=True,
     )
+    prodslda = torch.load(path / "prodslda", map_location=device)
+
 
     if args.plot:
         fig = plt.figure(figsize=(16, 9), dpi=100)
@@ -498,7 +500,10 @@ def retrain_model_cli():
 
     # evaluate the newly trained model on the training data
     print("evaluating model on train data")
+    print("bayesian updates:")
     eval_model(model, train_data, train_labels, labels)
+    print("original model:")
+    eval_model(prodslda, train_data, train_labels, labels)
 
     try:
         # evaluate the newly trained model on the testing data
@@ -510,13 +515,16 @@ def retrain_model_cli():
             path / "test_labels", map_location=device
         ).float()
 
+        print("bayesian updates:")
         eval_model(model, test_data, test_labels, labels)
+        print("original model:")
+        eval_model(prodslda, test_data, test_labels, labels)
     except FileNotFoundError:
         pass
 
 
 def eval_model(
-    model: Classification,
+    model: Simple_Model,
     data: torch.Tensor,
     labels: torch.Tensor,
     label_values: Iterable,
