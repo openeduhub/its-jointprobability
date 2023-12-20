@@ -184,12 +184,16 @@ class Classification(Simple_Model):
     ) -> torch.Tensor:
         num_full_data = docs.shape[0]
 
+
         if batch is not None:
             batch_size = len(batch)
-            docs = docs[list(batch)]
-            labels = labels[list(batch)] if labels is not None else None
+            docs = docs[list(batch)].float()
+            labels = labels[list(batch)].float() if labels is not None else None
         else:
             batch_size = num_full_data
+            docs = docs.float()
+            labels = labels.float()
+
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
@@ -231,12 +235,15 @@ class Classification(Simple_Model):
 
         num_full_data = docs.shape[0]
 
+
         if batch is not None:
             batch_size = len(batch)
-            docs = docs[list(batch)]
-            labels = labels[list(batch)] if labels is not None else None
+            docs = docs[list(batch)].float()
+            labels = labels[list(batch)].float() if labels is not None else None
         else:
             batch_size = num_full_data
+            docs = docs.float()
+            labels = labels.float()
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
