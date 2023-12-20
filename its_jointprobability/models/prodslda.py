@@ -81,7 +81,7 @@ class ProdSLDA(Model):
         else:
             batch_size = num_full_data
             docs = docs.float()
-            labels = labels.float()
+            labels = labels.float() if labels is not None else None
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
@@ -154,7 +154,6 @@ class ProdSLDA(Model):
     ):
         num_full_data = docs.shape[0]
 
-
         if batch is not None:
             batch_size = len(batch)
             docs = docs[list(batch)].float()
@@ -162,7 +161,7 @@ class ProdSLDA(Model):
         else:
             batch_size = num_full_data
             docs = docs.float()
-            labels = labels.float()
+            labels = labels.float() if labels is not None else None
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
@@ -234,24 +233,6 @@ class ProdSLDA(Model):
             num_samples=num_samples,
             return_sites=return_sites,
         )
-
-
-def import_data(
-    path: Path,
-) -> tuple[ProdSLDA, dict[int, str], list[str], torch.Tensor, torch.Tensor]:
-    args = torch.load(path / "prodslda_args")
-    kwargs = torch.load(path / "prodslda_kwargs")
-    prodslda = ProdSLDA(*args, **kwargs).to(device)
-    state_dict = torch.load(path / "prodslda_state_dict", map_location=device)
-    prodslda.load_state_dict(state_dict)
-    pyro.get_param_store().load(path / "pyro_store", map_location=device)
-    dictionary = torch.load(path / "dictionary")
-    labels = torch.load(path / "labels")
-
-    train_data = torch.load(path / "train_data", map_location=device)
-    train_labels = torch.load(path / "train_labels", map_location=device)
-
-    return prodslda, dictionary, labels, train_data, train_labels
 
 
 def retrain_model(path: Path, n=None) -> ProdSLDA:
