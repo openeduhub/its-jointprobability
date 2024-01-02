@@ -375,9 +375,16 @@ class Classification(Simple_Model):
         ).accuracy  # type: ignore
 
     def append_to_accuracies_(
-        self, docs: torch.Tensor, labels: torch.Tensor, batch_size: Optional[int] = None
+        self,
+        docs: torch.Tensor,
+        labels: torch.Tensor,
+        batch_size: Optional[int] = None,
+        freq: int = 1,
     ) -> None:
-        self.accuracies.append(self.calculate_accuracy(docs, labels, batch_size))
+        if len(self.accuracies) % freq == 0:
+            self.accuracies.append(self.calculate_accuracy(docs, labels, batch_size))
+        else:
+            self.accuracies.append(self.accuracies[-1])
 
 
 def retrain_model(
@@ -482,7 +489,10 @@ def retrain_model_cli():
         # calculate the training data accuracy after every epoch
         callback=(
             lambda x: x.append_to_accuracies_(
-                docs=train_data, labels=train_labels.swapaxes(-1, -2), batch_size=None
+                docs=train_data,
+                labels=train_labels.swapaxes(-1, -2),
+                batch_size=None,
+                freq=5,
             )
         )
         if args.plot
