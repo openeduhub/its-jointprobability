@@ -205,12 +205,12 @@ class Classification(Simple_Model):
 
         if batch is not None:
             batch_size = len(batch)
-            docs = docs[list(batch)].float()
-            labels = labels[list(batch)].float() if labels is not None else None
+            docs = docs[list(batch)]
+            labels = labels[list(batch)] if labels is not None else None
         else:
             batch_size = num_full_data
-            docs = docs.float()
-            labels = labels.float() if labels is not None else None
+            docs = docs
+            labels = labels if labels is not None else None
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
@@ -254,12 +254,12 @@ class Classification(Simple_Model):
 
         if batch is not None:
             batch_size = len(batch)
-            docs = docs[list(batch)].float()
-            labels = labels[list(batch)].float() if labels is not None else None
+            docs = docs[list(batch)]
+            labels = labels[list(batch)] if labels is not None else None
         else:
             batch_size = num_full_data
-            docs = docs.float()
-            labels = labels.float() if labels is not None else None
+            docs = docs
+            labels = labels if labels is not None else None
 
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
@@ -416,8 +416,15 @@ def retrain_model(
     model_kwargs: Optional[dict[str, Any]] = None,
     **kwargs,
 ) -> Classification:
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+    if model_kwargs is None:
+        model_kwargs = dict()
+
+    train_data: torch.Tensor = torch.load(
+        path / "train_data", map_location=torch.device("cpu")
+    ).float()
+    train_labels: torch.Tensor = torch.load(
+        path / "train_labels", map_location=torch.device("cpu")
+    ).float()
 
     if seed is not None:
         pyro.set_rng_seed(seed)
@@ -438,8 +445,6 @@ def retrain_model(
             prodslda = prodslda_module.retrain_model(path)
 
     print("training classification")
-    if model_kwargs is None:
-        model_kwargs = dict()
     model = Classification.with_priors(
         label_size=train_labels.shape[-1],
         prodslda=prodslda,
@@ -451,23 +456,19 @@ def retrain_model(
         **model_kwargs,
     )
 
-    num_epochs = math.ceil(train_data.shape[-2] / 1000)
-    batch_size = math.ceil(train_data.shape[-2] / num_epochs)
-    batch_strategy = get_random_batch_strategy(train_data.shape[-2], batch_size)
+    batches = batch_to_list(default_data_loader(train_data, train_labels))
 
-    for index, batch_ids in enumerate(batch_to_list(batch_strategy)):
-        print(f"epoch {index + 1} / {num_epochs}")
-        docs_batch = train_data[..., batch_ids, :]
-        labels_batch = train_labels[..., batch_ids, :]
-        with pyro.poutine.scale(scale=train_data.shape[-2] / docs_batch.shape[-2]):
+    for index, batch in enumerate(batches):
+        print(f"epoch {index + 1} / {len(batches)}")
+        with pyro.poutine.scale(scale=train_data.shape[-2] / batch[0].shape[-2]):
             model.bayesian_update(
-                docs_batch,
-                labels_batch,
+                batch[0],
+                batch[1],
                 initial_lr=1,
-                gamma=0.001,
+                gamma=0.99,
                 num_particles=8,
                 max_epochs=max_epochs,
-                batch_size=docs_batch.shape[-2],
+                batch_size=batch[0].shape[-2],
                 **kwargs,
             )
 
@@ -502,8 +503,12 @@ def retrain_model_cli():
 
     args = parser.parse_args()
 
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+    train_data: torch.Tensor = torch.load(
+        path / "train_data", map_location=device
+    ).float()
+    train_labels: torch.Tensor = torch.load(
+        path / "train_labels", map_location=device
+    ).float()
 
     model = retrain_model(
         Path(args.path),
@@ -631,18 +636,10 @@ def compare_to_wlo_classification(path: Path):
     classification, dictionary, uris, uri_title_dict = import_data(path)
     title_values = [uri_title_dict[uri] for uri in uris]
 
-    test_data: torch.Tensor = torch.load(
-        path / "test_data", map_location=device
-    ).float()
-    test_labels: torch.Tensor = torch.load(
-        path / "test_labels", map_location=device
-    ).float()
-    train_data: torch.Tensor = torch.load(
-        path / "train_data", map_location=device
-    ).float()
-    train_labels: torch.Tensor = torch.load(
-        path / "train_labels", map_location=device
-    ).float()
+    test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
+    test_labels: torch.Tensor = torch.load(path / "test_labels", map_location=device)
+    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
+    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
 
     comps = []
 
