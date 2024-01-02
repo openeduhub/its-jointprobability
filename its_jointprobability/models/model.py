@@ -86,7 +86,7 @@ class Simple_Model:
         elbo: pyro.infer.ELBO,
         data_loader: Iterator[tuple[bool, Sequence]],
         initial_lr: float = 0.1,
-        gamma: float = 0.9995,
+        gamma: float = 0.1,
         betas: tuple[float, float] = (0.95, 0.999),
         min_epochs: int = 100,
         max_epochs: int = 1000,
@@ -95,7 +95,15 @@ class Simple_Model:
         min_z_score: float = 1.0,
         keep_prev_losses: bool = False,
     ) -> None:
-        """Run stochastic variational inference."""
+        """
+        Run stochastic variational inference.
+
+        :param gamma: The decay rate of the learning rate.
+            After 100 epochs, the learning rate will be multiplied with gamma.
+            Note that this effect is multiplicative, so after 200 epochs,
+            the learning rate will be multiplied with gamma^2,
+            after 300 epochs, it will be multiplied with gamma^3, and so on.
+        """
 
         for hook in self.svi_pre_hooks:
             hook()
@@ -110,7 +118,7 @@ class Simple_Model:
                 # initial learning rate
                 "lr": initial_lr,
                 # the decay of the learning rate per training step
-                "lrd": gamma,
+                "lrd": gamma ** (1 / 100),
                 # hyperparameters for the per-parameter momentum
                 "betas": betas,
             }
@@ -167,8 +175,7 @@ class Simple_Model:
     def draw_posterior_samples(
         self,
         data_len: int,
-        data_args: Optional[Sequence[Any]] = None,
-        data_kwargs: Optional[dict[str, Any]] = None,
+        data_args: Optional[Collection[Any]] = None,
         num_samples: int = 100,
         parallel_sample: bool = False,
         batch_size: int = 1000,
