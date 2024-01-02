@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pyro.nn.module import PyroModule, to_pyro_module_
-from its_jointprobability.models.model import Model
+from its_jointprobability.models.model import Model, default_data_loader
 from its_jointprobability.utils import (
     Quality_Result,
     device,
@@ -97,9 +97,7 @@ class ProdSLDA(Model):
                 ).to_event(1),
             )
 
-        # pyro.module("decoder", self.decoder)
         with docs_plate, scale:
-            # Dirichlet prior 𝑝(𝜃|𝛼) is replaced by a logistic-normal distribution
             logtheta_loc = docs.new_zeros(self.num_topics)
             logtheta_scale = docs.new_ones(self.num_topics)
             logtheta = pyro.sample(
@@ -109,8 +107,6 @@ class ProdSLDA(Model):
                 logtheta = logtheta.squeeze(0)
             theta = F.softmax(logtheta, -1)
 
-        # conditional distribution of 𝑤𝑛 is defined as
-        # 𝑤𝑛|𝛽,𝜃 ~ Categorical(𝜎(𝛽𝜃))
         count_param = self.decoder(theta)
 
         with docs_plate, scale:
@@ -167,6 +163,7 @@ class ProdSLDA(Model):
         docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
         scale = pyro.poutine.scale(scale=num_full_data / batch_size)
 
+        # variational parameters for the relationship between topics and labels
         mu_q = pyro.param(
             "mu",
             lambda: torch.randn(self.label_size, self.num_topics)
@@ -256,12 +253,12 @@ def retrain_model(path: Path, n=None) -> ProdSLDA:
         observe_negative_labels=torch.tensor(True, device=device),
     ).to(device)
 
+    data_loader = default_data_loader(train_data, train_labels)
+
     prodslda.run_svi(
-        train_args=[train_data, train_labels],
-        train_data_len=train_data.shape[0],
-        elbo=pyro.infer.TraceGraph_ELBO(num_particles=3),
-        max_epochs=1000,
-        batch_size=n,
+        data_loader=data_loader,
+        elbo=pyro.infer.Trace_ELBO(num_particles=1),
+        max_epochs=1000
     )
 
     prodslda = prodslda.eval()
