@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import math
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import its_jointprobability.models.prodslda as prodslda_module
 import matplotlib.pyplot as plt
@@ -16,7 +16,7 @@ import pyro.optim
 import torch
 import torch.nn.functional as F
 from icecream import ic
-from its_jointprobability.models.model import Simple_Model
+from its_jointprobability.models.model import Simple_Model, default_data_loader
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
     Quality_Result,
@@ -50,6 +50,12 @@ class Classification(Simple_Model):
         prodslda: ProdSLDA,
         observe_negative_labels: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
+        svi_pre_hooks: Optional[Collection[Callable[[], Any]]] = None,
+        svi_step_hooks: Optional[Collection[Callable[[], Any]]] = None,
+        svi_post_hooks: Optional[Collection[Callable[[], Any]]] = None,
+        svi_self_pre_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
+        svi_self_step_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
+        svi_self_post_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
     ):
         self.label_size = label_size
         self.observe_negative_labels = (
@@ -64,6 +70,19 @@ class Classification(Simple_Model):
         self.prodlda_logtheta_params = pyro.poutine.block(prodslda.logtheta_params)
         self.prodlda_clean_up_posterior_samples = prodslda.clean_up_posterior_samples
         self.device = device
+
+        self.svi_pre_hooks = svi_pre_hooks if svi_pre_hooks is not None else []
+        self.svi_step_hooks = svi_step_hooks if svi_step_hooks is not None else []
+        self.svi_post_hooks = svi_post_hooks if svi_post_hooks is not None else []
+        self.svi_self_pre_hooks = (
+            svi_self_pre_hooks if svi_self_pre_hooks is not None else []
+        )
+        self.svi_self_step_hooks = (
+            svi_self_step_hooks if svi_self_step_hooks is not None else []
+        )
+        self.svi_self_post_hooks = (
+            svi_self_post_hooks if svi_self_post_hooks is not None else []
+        )
 
         self.accuracies = []
 
@@ -315,6 +334,7 @@ class Classification(Simple_Model):
         docs: torch.Tensor,
         labels: torch.Tensor,
         num_particles=3,
+        batch_size: Optional[int] = None,
         *args,
         **kwargs,
     ):
@@ -324,14 +344,14 @@ class Classification(Simple_Model):
         elbo = pyro.infer.Trace_ELBO(
             num_particles=num_particles, vectorize_particles=True
         )
+        data_loader = default_data_loader(docs, labels, batch_size=batch_size)
 
         # run svi on the given data
         param_store = pyro.get_param_store()
         with param_store.scope() as svi:
             self.run_svi(
                 elbo=elbo,
-                train_data_len=docs.shape[-2],
-                train_args=[docs, labels],
+                data_loader=data_loader,
                 *args,
                 **kwargs,
             )
@@ -392,7 +412,8 @@ def retrain_model(
     clear_store=True,
     prodslda: Optional[ProdSLDA] = None,
     seed: Optional[int] = None,
-        max_epochs: int = 250,
+    max_epochs: int = 250,
+    model_kwargs: Optional[dict[str, Any]] = None,
     **kwargs,
 ) -> Classification:
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
@@ -417,6 +438,8 @@ def retrain_model(
             prodslda = prodslda_module.retrain_model(path)
 
     print("training classification")
+    if model_kwargs is None:
+        model_kwargs = dict()
     model = Classification.with_priors(
         label_size=train_labels.shape[-1],
         prodslda=prodslda,
@@ -425,6 +448,7 @@ def retrain_model(
         nu_loc=-4.0,  # prior probability of about 2% to assign a discipline
         nu_scale=5.0,
         a_scale=2.0,
+        **model_kwargs,
     )
 
     num_epochs = math.ceil(train_data.shape[-2] / 1000)
@@ -487,16 +511,21 @@ def retrain_model_cli():
         max_epochs=args.max_epochs,
         # if plotting the training process,
         # calculate the training data accuracy after every epoch
-        callback=(
-            lambda x: x.append_to_accuracies_(
-                docs=train_data,
-                labels=train_labels.swapaxes(-1, -2),
-                batch_size=None,
-                freq=5,
-            )
-        )
-        if args.plot
-        else None,
+        model_kwargs={
+            "svi_self_step_hooks": [
+                (
+                    partial(
+                        Classification.append_to_accuracies_,
+                        docs=train_data,
+                        labels=train_labels.swapaxes(-1, -2),
+                        batch_size=None,
+                        freq=5,
+                    )
+                )
+            ]
+            if args.plot
+            else None
+        },
         keep_prev_losses=True,
     )
     prodslda = torch.load(path / "prodslda", map_location=device)
@@ -596,6 +625,7 @@ def import_data(
 
 def compare_to_wlo_classification(path: Path):
     import shelve
+
     import requests
 
     classification, dictionary, uris, uri_title_dict = import_data(path)
