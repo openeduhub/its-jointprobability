@@ -20,6 +20,19 @@ from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
 
 
+def default_data_loader(
+    *tensors: torch.Tensor, batch_size: Optional[int] = None
+) -> Iterator[tuple[bool, list[torch.Tensor]]]:
+    n = len(tensors[0])
+    if batch_size is None:
+        batch_size = min(3000, max(math.ceil(n ** (3 / 4)), min(1000, n)))
+
+    batch_strategy = get_random_batch_strategy(n, batch_size)
+
+    for last_batch_in_epoch, batch in batch_strategy:
+        yield last_batch_in_epoch, [tensor[batch] for tensor in tensors]
+
+
 class Simple_Model:
     """Base class for Bayesian models that are learned through SVI."""
 
@@ -27,6 +40,13 @@ class Simple_Model:
     return_sites: Collection[str]
     # the dimensions along which to concat the random variables during batching
     return_site_cat_dim: dict[str, int]
+
+    svi_pre_hooks: Collection[Callable[[], Any]]
+    svi_step_hooks: Collection[Callable[[], Any]]
+    svi_post_hooks: Collection[Callable[[], Any]]
+    svi_self_pre_hooks: Collection[Callable[[Simple_Model], Any]]
+    svi_self_step_hooks: Collection[Callable[[Simple_Model], Any]]
+    svi_self_post_hooks: Collection[Callable[[Simple_Model], Any]]
 
     @abstractmethod
     def model(self, *args, batch: Optional[Collection[int]] = None, **kwargs):
@@ -47,15 +67,9 @@ class Simple_Model:
     def run_svi(
         self,
         elbo: pyro.infer.ELBO,
-        train_data_len: int,
-        train_args: Optional[Sequence[Any]] = None,
-        train_kwargs: Optional[dict[str, Any]] = None,
-        batch_strategy_factory: Optional[
-            Callable[[int, int], Iterator[tuple[bool, Collection[int]]]]
-        ] = None,
-        batch_size: Optional[int] = None,
+        data_loader: Iterator[tuple[bool, Sequence]],
         initial_lr: float = 0.1,
-        gamma: float = 0.1,
+        gamma: float = 0.9995,
         betas: tuple[float, float] = (0.95, 0.999),
         min_epochs: int = 100,
         max_epochs: int = 1000,
@@ -63,41 +77,28 @@ class Simple_Model:
         z_score_num: int = 10,
         min_z_score: float = 1.0,
         keep_prev_losses: bool = False,
-        callback: Optional[Callable[[Simple_Model], None]] = None,
     ) -> None:
         """Run stochastic variational inference."""
+
+        for hook in self.svi_pre_hooks:
+            hook()
+        for hook in self.svi_self_pre_hooks:
+            hook(self)
 
         if not hasattr(self, "losses") or not keep_prev_losses:
             self.losses = list()
 
-        train_args = train_args or list()
-        train_kwargs = train_kwargs or dict()
-
-        if batch_size is None:
-            batch_size = min(
-                3000,
-                max(
-                    math.ceil(train_data_len ** (3 / 4)),
-                    min(1000, train_data_len),
-                ),
-            )
-
-        batches_per_epoch = math.ceil(train_data_len / batch_size)
         optim = pyro.optim.ClippedAdam(
             {
                 # initial learning rate
                 "lr": initial_lr,
-                # final learning rate will be gamma * initial_lr
-                "lrd": gamma ** (1 / (max_epochs * batches_per_epoch)),
+                # the decay of the learning rate per training step
+                "lrd": gamma,
                 # hyperparameters for the per-parameter momentum
                 "betas": betas,
             }
         )
         svi = pyro.infer.SVI(self.model, self.guide, optim, elbo)
-        if batch_strategy_factory is None:
-            batch_strategy = get_random_batch_strategy(train_data_len, batch_size)
-        else:
-            batch_strategy = batch_strategy_factory(train_data_len, batch_size)
 
         # collect the last z-scores using a ring buffer
         z_scores = deque(maxlen=z_score_num)
@@ -106,13 +107,8 @@ class Simple_Model:
         epochs = trange(max_epochs, desc="svi steps", miniters=10)
         for epoch in epochs:
             batch_losses = list()
-            for last_batch_in_epoch, minibatch in batch_strategy:
-                # if a batch size has been given,
-                # assume that the model and guide
-                # are parameterized by a subsample index list
-                batch_losses.append(
-                    svi.step(*train_args, batch=minibatch, **train_kwargs)
-                )
+            for last_batch_in_epoch, train_args in data_loader:
+                batch_losses.append(svi.step(*train_args))
                 # break if this was the last batch
                 if last_batch_in_epoch:
                     break
@@ -120,9 +116,10 @@ class Simple_Model:
             loss = np.mean(batch_losses)
             self.losses.append(loss)
 
-            # calculate the accuracy of one posterior sample
-            if callback is not None:
-                callback(self)
+            for hook in self.svi_step_hooks:
+                hook()
+            for hook in self.svi_self_step_hooks:
+                hook(self)
 
             # compute the last z-score
             mean = np.mean(self.losses[-z_score_num:])
@@ -140,6 +137,11 @@ class Simple_Model:
                 and rel_std < min_rel_std
             ):
                 break
+
+        for hook in self.svi_post_hooks:
+            hook()
+        for hook in self.svi_self_post_hooks:
+            hook(self)
 
     def predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
         """Return a Predictive object in order to generate posterior samples."""
@@ -201,10 +203,11 @@ class Simple_Model:
 class Model(Simple_Model, PyroModule):
     """A Bayesian model that relies on a neural network."""
 
-    def run_svi(self, *args, **kwargs) -> None:
-        self.train()
-        super().run_svi(*args, **kwargs)
-
-    def draw_posterior_samples(self, *args, **kwargs) -> dict[str, torch.Tensor]:
-        self.eval()
-        return super().draw_posterior_samples(*args, **kwargs)
+    def __init__(self) -> None:
+        self.svi_pre_hooks = [self.train]
+        self.svi_self_pre_hooks = []
+        self.svi_step_hooks = []
+        self.svi_self_step_hooks = []
+        self.svi_post_hooks = [self.eval]
+        self.svi_self_post_hooks = []
+        super().__init__()
