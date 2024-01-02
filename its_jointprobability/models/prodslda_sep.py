@@ -677,16 +677,26 @@ def compare_to_wlo_classification(path: Path):
             )
 
         df_wlo_cls = qualitiy_measure_df(qualities_wlo_cls)
-        df_wlo_cls["preds old"] = -wlo_cls_tensor.sum(-2)
-        df_wlo_cls["preds new"] = 0
+        df_wlo_cls["preds"] = wlo_cls_tensor.sum(-2)
         df_new = qualitiy_measure_df(qualities_new)
-        df_new["preds old"] = 0
-        df_new["preds new"] = (samples.mean(0) > qualities_new.cutoff).sum(-2)
+        df_new["preds"] = (samples.mean(0) > qualities_new.cutoff).sum(-2)
 
-        df_new["count"] *= 2
-        comp = (df_new - df_wlo_cls).sort_values("f1-score", ascending=False)
-        comps.append(comp)
-        print(comp)
+        joined = df_new.merge(
+            df_wlo_cls,
+            how="inner",
+            left_index=True,
+            right_index=True,
+            suffixes=(" new", " old"),
+        )
+        joined["count"] = joined["count new"]
+        joined = joined.drop(["count old", "count new"], axis=1)
+
+        for metric in ["accuracy", "recall", "precision", "f1-score"]:
+            label_new, label_old = metric + " new", metric + " old"
+            joined[metric + " diff"] = joined[label_new] - joined[label_old]
+
+        print(joined)
+        comps.append(joined)
 
     return comps
 
