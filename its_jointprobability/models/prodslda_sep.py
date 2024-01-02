@@ -517,7 +517,9 @@ def retrain_model_cli():
 
         fig.savefig("./training_process.png")
 
-    labels: torch.Tensor = torch.load(path / "labels")
+    uris: list[str] = torch.load(path / "uris")
+    uri_title_dict: dict[str, str] = torch.load(path / "uri_title_dict")
+    labels: list[str] = [uri_title_dict[uri] for uri in uris]
 
     # evaluate the newly trained model on the training data
     print("evaluating model on train data")
