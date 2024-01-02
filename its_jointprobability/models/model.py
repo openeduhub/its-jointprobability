@@ -15,6 +15,7 @@ from its_jointprobability.utils import (
     batch_to_list,
     get_random_batch_strategy,
     get_sequential_batch_strategy,
+    device,
 )
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
@@ -30,7 +31,9 @@ def default_data_loader(
     batch_strategy = get_random_batch_strategy(n, batch_size)
 
     for last_batch_in_epoch, batch in batch_strategy:
-        yield last_batch_in_epoch, [tensor[batch] for tensor in tensors]
+        yield last_batch_in_epoch, [
+            tensor[batch].to(device).float() for tensor in tensors
+        ]
 
 
 class Simple_Model:
