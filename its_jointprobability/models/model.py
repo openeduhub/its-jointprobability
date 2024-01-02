@@ -34,6 +34,20 @@ def default_data_loader(
         yield last_batch_in_epoch, [
             tensor[batch].to(device).float() for tensor in tensors
         ]
+        
+def sequential_data_loader(
+    *tensors: torch.Tensor, batch_size: Optional[int] = None
+) -> Iterator[tuple[bool, list[torch.Tensor]]]:
+    n = len(tensors[0])
+    if batch_size is None:
+        batch_size = min(3000, max(math.ceil(n ** (3 / 4)), min(1000, n)))
+
+    batch_strategy = get_sequential_batch_strategy(n, batch_size)
+
+    for last_batch_in_epoch, batch in batch_strategy:
+        yield last_batch_in_epoch, [
+            tensor[batch].to(device).float() for tensor in tensors
+        ]
 
 
 class Simple_Model:
@@ -163,17 +177,15 @@ class Simple_Model:
     ) -> dict[str, torch.Tensor]:
         """Draw posterior samples from this model."""
         return_sites = return_sites if return_sites is not None else self.return_sites
-        data_args = data_args if data_args is not None else list()
-        data_kwargs = data_kwargs if data_kwargs is not None else dict()
+        data_args = data_args if data_args is not None else []
         batch_size = min(data_len, batch_size)
-
-        batch_strategy = get_sequential_batch_strategy(data_len, batch_size)
         predictive = self.predictive(
             num_samples=num_samples, return_sites=return_sites, parallel=parallel_sample
         )
 
         posterior_samples = None
         # draw from the posterior in batches
+        batch_strategy = sequential_data_loader(*data_args, batch_size=batch_size)
         batches = batch_to_list(batch_strategy)
         if progress_bar:
             bar = tqdm(batches, desc="posterior sample")
@@ -182,9 +194,7 @@ class Simple_Model:
 
         for batch in bar:
             with torch.no_grad():
-                posterior_batch: dict[str, torch.Tensor] = predictive(
-                    *data_args, batch=batch, **data_kwargs
-                )
+                posterior_batch: dict[str, torch.Tensor] = predictive(*batch)
 
             if posterior_samples is None:
                 posterior_samples = posterior_batch
