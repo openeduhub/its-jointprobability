@@ -56,6 +56,7 @@ class Classification(Simple_Model):
         svi_self_pre_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
         svi_self_step_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
         svi_self_post_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
+        **kwargs,
     ):
         self.label_size = label_size
         self.observe_negative_labels = (
@@ -323,6 +324,7 @@ class Classification(Simple_Model):
             prodslda=prodslda,
             observe_negative_labels=observe_negative_labels,
             device=device,
+            **kwargs,
         )
         obj.nu_prior = partial(obj.nu_prior, **kwargs)
         obj.logtheta_prior = partial(obj.logtheta_prior, **kwargs)
@@ -465,7 +467,7 @@ def retrain_model(
                 batch[0],
                 batch[1],
                 initial_lr=1,
-                gamma=0.99,
+                gamma=1.0,
                 num_particles=8,
                 max_epochs=max_epochs,
                 batch_size=batch[0].shape[-2],
@@ -518,14 +520,11 @@ def retrain_model_cli():
         # calculate the training data accuracy after every epoch
         model_kwargs={
             "svi_self_step_hooks": [
-                (
-                    partial(
-                        Classification.append_to_accuracies_,
-                        docs=train_data,
-                        labels=train_labels.swapaxes(-1, -2),
-                        batch_size=None,
-                        freq=5,
-                    )
+                partial(
+                    Classification.append_to_accuracies_,
+                    docs=train_data,
+                    labels=train_labels.swapaxes(-1, -2),
+                    freq=5,
                 )
             ]
             if args.plot
