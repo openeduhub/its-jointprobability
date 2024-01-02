@@ -9,6 +9,7 @@ from typing import Any, Iterable, Optional
 import its_jointprobability.models.prodslda as prodslda_module
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 import pyro
 import pyro.distributions as dist
 import pyro.infer
@@ -200,24 +201,11 @@ class Classification(Simple_Model):
         self,
         docs: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        batch: Optional[Collection[int]] = None,
     ) -> torch.Tensor:
-        num_full_data = docs.shape[0]
-
-        if batch is not None:
-            batch_size = len(batch)
-            docs = docs[list(batch)]
-            labels = labels[list(batch)] if labels is not None else None
-        else:
-            batch_size = num_full_data
-            docs = docs
-            labels = labels if labels is not None else None
-
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
-        docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
-        scale = pyro.poutine.scale(scale=num_full_data / batch_size)
+        docs_plate = pyro.plate("documents-cls", docs.shape[-2], dim=-1)
 
-        with docs_plate, scale:
+        with docs_plate:
             logtheta = self.logtheta_prior(docs)
             theta = F.softmax(logtheta, -1)
 
@@ -225,7 +213,7 @@ class Classification(Simple_Model):
         with labels_plate:
             nu = self.nu_prior()
 
-        with docs_plate, scale:
+        with docs_plate:
             with labels_plate:
                 a = self.a_prior(nu, theta)
                 label = pyro.sample(
@@ -246,34 +234,20 @@ class Classification(Simple_Model):
         self,
         docs: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        batch: Optional[Collection[int]] = None,
     ) -> torch.Tensor:
         # essentially identical to the model,
         # but uses the posterior functions, rather than the prior ones
-
-        num_full_data = docs.shape[0]
-
-        if batch is not None:
-            batch_size = len(batch)
-            docs = docs[list(batch)]
-            labels = labels[list(batch)] if labels is not None else None
-        else:
-            batch_size = num_full_data
-            docs = docs
-            labels = labels if labels is not None else None
-
         labels_plate = pyro.plate("labels", self.label_size, dim=-2)
-        docs_plate = pyro.plate("documents-cls", batch_size, dim=-1)
-        scale = pyro.poutine.scale(scale=num_full_data / batch_size)
+        docs_plate = pyro.plate("documents-cls", docs.shape[-2], dim=-1)
 
-        with docs_plate, scale:
+        with docs_plate:
             logtheta_q = self.logtheta_posterior(docs)
             theta_q = logtheta_q.softmax(-1)
 
         with labels_plate:
             nu_q = self.nu_posterior()
 
-        with docs_plate, scale:
+        with docs_plate:
             with labels_plate:
                 return self.a_posterior(nu_q, theta_q)
 
@@ -462,12 +436,12 @@ def retrain_model(
 
     for index, batch in enumerate(batches):
         print(f"epoch {index + 1} / {len(batches)}")
-        with pyro.poutine.scale(scale=train_data.shape[-2] / batch[0].shape[-2]):
+        with pyro.poutine.scale(scale=train_data.shape[-2] / batch[0].shape[-2] ):
             model.bayesian_update(
                 batch[0],
                 batch[1],
                 initial_lr=1,
-                gamma=1.0,
+                gamma=0.1,
                 num_particles=8,
                 max_epochs=max_epochs,
                 batch_size=batch[0].shape[-2],
@@ -517,14 +491,14 @@ def retrain_model_cli():
         seed=args.seed,
         max_epochs=args.max_epochs,
         # if plotting the training process,
-        # calculate the training data accuracy after every epoch
+        # calculate the training data accuracy after every few epochs
         model_kwargs={
             "svi_self_step_hooks": [
                 partial(
                     Classification.append_to_accuracies_,
                     docs=train_data,
                     labels=train_labels.swapaxes(-1, -2),
-                    freq=5,
+                    freq=10,
                 )
             ]
             if args.plot
@@ -556,10 +530,7 @@ def retrain_model_cli():
 
     # evaluate the newly trained model on the training data
     print("evaluating model on train data")
-    print("bayesian updates:")
     eval_model(model, train_data, train_labels, labels)
-    print("original model:")
-    eval_model(prodslda, train_data, train_labels, labels)
 
     try:
         # evaluate the newly trained model on the testing data
@@ -571,10 +542,8 @@ def retrain_model_cli():
             path / "test_labels", map_location=device
         ).float()
 
-        print("bayesian updates:")
         eval_model(model, test_data, test_labels, labels)
-        print("original model:")
-        eval_model(prodslda, test_data, test_labels, labels)
+        
     except FileNotFoundError:
         pass
 
