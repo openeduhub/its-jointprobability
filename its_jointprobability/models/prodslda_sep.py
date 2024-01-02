@@ -385,6 +385,7 @@ def retrain_model(
     clear_store=True,
     prodslda: Optional[ProdSLDA] = None,
     seed: Optional[int] = None,
+        max_epochs: int = 250,
     **kwargs,
 ) -> Classification:
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
@@ -434,7 +435,7 @@ def retrain_model(
                 initial_lr=1,
                 gamma=0.001,
                 num_particles=8,
-                max_epochs=250,
+                max_epochs=max_epochs,
                 batch_size=docs_batch.shape[-2],
                 **kwargs,
             )
@@ -458,6 +459,12 @@ def retrain_model_cli():
         default=0,
         help="The seed to use for pseudo random number generation",
     )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=250,
+        help="The maximum number of training epochs per batch of data",
+    )
     parser.add_argument("--plot", action="store_true")
 
     ic.disable()
@@ -470,6 +477,7 @@ def retrain_model_cli():
     model = retrain_model(
         Path(args.path),
         seed=args.seed,
+        max_epochs=args.max_epochs,
         # if plotting the training process,
         # calculate the training data accuracy after every epoch
         callback=(
