@@ -17,15 +17,15 @@ import pyro.optim
 import torch
 import torch.nn.functional as F
 from icecream import ic
-from its_jointprobability.models.model import Simple_Model, default_data_loader
+from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
     Quality_Result,
     batch_to_list,
     device,
-    get_random_batch_strategy,
     quality_measures,
     texts_to_bow_tensor,
+    default_data_loader,
 )
 from pyro.infer.enum import partial
 from tqdm import tqdm
@@ -86,7 +86,7 @@ class Classification(Simple_Model):
             svi_self_post_hooks if svi_self_post_hooks is not None else []
         )
 
-        self.accuracies = []
+        self.accuracies: list[float] = []
 
     def logtheta_prior(
         self,
@@ -220,11 +220,6 @@ class Classification(Simple_Model):
                     "label",
                     dist.Bernoulli(logits=a),  # type: ignore
                     obs=labels.T if labels is not None else None,
-                    # obs_mask=torch.logical_or(
-                    #     self.observe_negative_labels, labels.T.bool()
-                    # )
-                    # if labels is not None
-                    # else None,
                     infer={"enumerate": "parallel"},
                 )
 
@@ -311,7 +306,6 @@ class Classification(Simple_Model):
         labels: torch.Tensor,
         num_particles=3,
         batch_size: Optional[int] = None,
-        *args,
         **kwargs,
     ):
         """
@@ -325,12 +319,7 @@ class Classification(Simple_Model):
         # run svi on the given data
         param_store = pyro.get_param_store()
         with param_store.scope() as svi:
-            self.run_svi(
-                elbo=elbo,
-                data_loader=data_loader,
-                *args,
-                **kwargs,
-            )
+            self.run_svi(elbo, data_loader, **kwargs)
 
         with param_store.scope(svi):
             nu_loc = pyro.param("nu_loc").detach()
