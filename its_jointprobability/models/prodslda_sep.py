@@ -436,7 +436,7 @@ def retrain_model(
 
     for index, batch in enumerate(batches):
         print(f"epoch {index + 1} / {len(batches)}")
-        with pyro.poutine.scale(scale=train_data.shape[-2] / batch[0].shape[-2] ):
+        with pyro.poutine.scale(scale=train_data.shape[-2] / batch[0].shape[-2]):
             model.bayesian_update(
                 batch[0],
                 batch[1],
@@ -543,7 +543,7 @@ def retrain_model_cli():
         ).float()
 
         eval_model(model, test_data, test_labels, labels)
-        
+
     except FileNotFoundError:
         pass
 
@@ -710,8 +710,13 @@ def compare_to_wlo_classification(path: Path):
             label_new, label_old = metric + " new", metric + " old"
             joined[metric + " diff"] = joined[label_new] - joined[label_old]
 
+        joined = joined.sort_index(axis=1).sort_values("f1-score diff", ascending=False)
+
         print(joined)
         comps.append(joined)
+
+    comps[0].to_csv(path / "comparison_test.csv")
+    comps[1].to_csv(path / "comparison_train.csv")
 
     return comps
 
