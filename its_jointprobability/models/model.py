@@ -10,11 +10,7 @@ import pyro
 import pyro.infer
 import pyro.optim
 import torch
-from its_jointprobability.utils import (
-    Data_Loader,
-    batch_to_list,
-    sequential_data_loader,
-)
+from its_jointprobability.utils import Data_Loader, batch_to_list
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
 
@@ -145,25 +141,20 @@ class Simple_Model:
 
     def draw_posterior_samples(
         self,
-        data_len: int,
-        data_args: Optional[Collection[Any]] = None,
+        data_loader: Data_Loader,
         num_samples: int = 100,
         parallel_sample: bool = False,
-        batch_size: int = 1000,
         return_sites: Optional[Collection[str]] = None,
         progress_bar: bool = True,
     ) -> dict[str, torch.Tensor]:
         """Draw posterior samples from this model."""
         return_sites = return_sites if return_sites is not None else self.return_sites
-        data_args = data_args if data_args is not None else []
-        batch_size = min(data_len, batch_size)
         predictive = self.predictive(
             num_samples=num_samples, return_sites=return_sites, parallel=parallel_sample
         )
 
         posterior_samples = None
         # draw from the posterior in batches
-        data_loader = sequential_data_loader(*data_args, batch_size=batch_size)
         batches = batch_to_list(data_loader)
         if progress_bar:
             bar: Iterable[Sequence[torch.Tensor]] = tqdm(

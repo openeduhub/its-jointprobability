@@ -12,7 +12,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from its_jointprobability.models.model import Model
-from its_jointprobability.utils import device, texts_to_bow_tensor, default_data_loader
+from its_jointprobability.utils import (
+    device,
+    sequential_data_loader,
+    texts_to_bow_tensor,
+    default_data_loader,
+)
 from pyro.nn.module import to_pyro_module_
 
 
@@ -219,8 +224,9 @@ class ProdSLDA(Model):
         return_sites = return_sites or self.return_sites
         bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
         return self.draw_posterior_samples(
-            data_len=bow_tensor.shape[0],
-            data_args=[bow_tensor],
+            data_loader=sequential_data_loader(
+                bow_tensor, device=device, dtype=torch.float
+            ),
             num_samples=num_samples,
             return_sites=return_sites,
         )

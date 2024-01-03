@@ -24,6 +24,7 @@ from its_jointprobability.utils import (
     batch_to_list,
     device,
     quality_measures,
+    sequential_data_loader,
     texts_to_bow_tensor,
     default_data_loader,
 )
@@ -267,8 +268,9 @@ class Classification(Simple_Model):
         return_sites = return_sites if return_sites is not None else self.return_sites
         bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
         return self.draw_posterior_samples(
-            data_len=bow_tensor.shape[0],
-            data_args=[bow_tensor],
+            data_loader=sequential_data_loader(
+                bow_tensor, device=device, dtype=torch.float
+            ),
             num_samples=num_samples,
             return_sites=return_sites,
         )
@@ -314,7 +316,9 @@ class Classification(Simple_Model):
         elbo = pyro.infer.Trace_ELBO(
             num_particles=num_particles, vectorize_particles=True
         )
-        data_loader = default_data_loader(docs, labels, batch_size=batch_size)
+        data_loader = default_data_loader(
+            docs, labels, batch_size=batch_size, dtype=torch.float, device=device
+        )
 
         # run svi on the given data
         param_store = pyro.get_param_store()
@@ -348,10 +352,13 @@ class Classification(Simple_Model):
     ) -> float:
         return quality_measures(
             self.draw_posterior_samples(
-                docs.shape[-2],
-                data_args=[docs],
+                data_loader=sequential_data_loader(
+                    docs,
+                    batch_size=batch_size,
+                    device=self.device,
+                    dtype=torch.float,
+                ),
                 num_samples=1,
-                batch_size=batch_size if batch_size is not None else docs.shape[-2],
                 return_sites=["label"],
                 progress_bar=False,
             )["label"],
@@ -386,10 +393,10 @@ def retrain_model(
 
     train_data: torch.Tensor = torch.load(
         path / "train_data", map_location=torch.device("cpu")
-    ).float()
+    )
     train_labels: torch.Tensor = torch.load(
         path / "train_labels", map_location=torch.device("cpu")
-    ).float()
+    )
 
     if seed is not None:
         pyro.set_rng_seed(seed)
@@ -468,12 +475,8 @@ def retrain_model_cli():
 
     args = parser.parse_args()
 
-    train_data: torch.Tensor = torch.load(
-        path / "train_data", map_location=device
-    ).float()
-    train_labels: torch.Tensor = torch.load(
-        path / "train_labels", map_location=device
-    ).float()
+    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
+    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
 
     model = retrain_model(
         Path(args.path),
@@ -524,12 +527,10 @@ def retrain_model_cli():
     try:
         # evaluate the newly trained model on the testing data
         print("evaluating model on test data")
-        test_data: torch.Tensor = torch.load(
-            path / "test_data", map_location=device
-        ).float()
+        test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
         test_labels: torch.Tensor = torch.load(
             path / "test_labels", map_location=device
-        ).float()
+        )
 
         eval_model(model, test_data, test_labels, labels)
 
@@ -545,7 +546,13 @@ def eval_model(
 ) -> Quality_Result:
     ic.disable()
     samples = model.draw_posterior_samples(
-        data.shape[-2], data_args=[data], return_sites=["a"], num_samples=100
+        data_loader=sequential_data_loader(
+            data,
+            device=device,
+            dtype=torch.float,
+        ),
+        return_sites=["a"],
+        num_samples=100,
     )["a"]
     global_measures = quality_measures(samples, labels, mean_dim=0, cutoff=None)
     print(f"global measures: {global_measures}")
@@ -654,7 +661,8 @@ def compare_to_wlo_classification(path: Path):
         )
 
         samples = classification.draw_posterior_samples(
-            len(data), data_args=[data], return_sites=["a"]
+            data_loader=sequential_data_loader(data, device=device, dtype=torch.float),
+            return_sites=["a"],
         )["a"]
 
         qualities_new = quality_measures(
