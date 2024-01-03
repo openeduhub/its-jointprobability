@@ -11,15 +11,9 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pyro.nn.module import PyroModule, to_pyro_module_
-from its_jointprobability.models.model import Model, default_data_loader
-from its_jointprobability.utils import (
-    Quality_Result,
-    device,
-    quality_measures,
-    texts_to_bow_tensor,
-)
-from icecream import ic
+from its_jointprobability.models.model import Model
+from its_jointprobability.utils import device, texts_to_bow_tensor, default_data_loader
+from pyro.nn.module import to_pyro_module_
 
 
 class ProdSLDA(Model):
@@ -258,7 +252,7 @@ def retrain_model(path: Path, n=None) -> ProdSLDA:
     prodslda.run_svi(
         data_loader=data_loader,
         elbo=pyro.infer.Trace_ELBO(num_particles=1),
-        max_epochs=1000
+        max_epochs=1000,
     )
 
     prodslda = prodslda.eval()

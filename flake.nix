@@ -79,6 +79,10 @@
             isort
             pylint
             ipython
+            mypy
+            # library stubs for mypy
+            types-tqdm
+            pandas-stubs
           ]
           ++ (python-packages-build py-pkgs);
 

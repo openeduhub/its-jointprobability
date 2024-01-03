@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import math
 from abc import abstractmethod
 from collections import deque
-from collections.abc import Callable, Collection, Iterator
-from typing import Any, Optional, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
+from typing import Any, Optional
 
 import numpy as np
 import pyro
@@ -12,42 +11,12 @@ import pyro.infer
 import pyro.optim
 import torch
 from its_jointprobability.utils import (
+    Data_Loader,
     batch_to_list,
-    get_random_batch_strategy,
-    get_sequential_batch_strategy,
-    device,
+    sequential_data_loader,
 )
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
-
-
-def default_data_loader(
-    *tensors: torch.Tensor, batch_size: Optional[int] = None
-) -> Iterator[tuple[bool, list[torch.Tensor]]]:
-    n = len(tensors[0])
-    if batch_size is None:
-        batch_size = min(3000, max(math.ceil(n ** (3 / 4)), min(1000, n)))
-
-    batch_strategy = get_random_batch_strategy(n, batch_size)
-
-    for last_batch_in_epoch, batch in batch_strategy:
-        yield last_batch_in_epoch, [
-            tensor[batch].to(device).float() for tensor in tensors
-        ]
-        
-def sequential_data_loader(
-    *tensors: torch.Tensor, batch_size: Optional[int] = None
-) -> Iterator[tuple[bool, list[torch.Tensor]]]:
-    n = len(tensors[0])
-    if batch_size is None:
-        batch_size = min(3000, max(math.ceil(n ** (3 / 4)), min(1000, n)))
-
-    batch_strategy = get_sequential_batch_strategy(n, batch_size)
-
-    for last_batch_in_epoch, batch in batch_strategy:
-        yield last_batch_in_epoch, [
-            tensor[batch].to(device).float() for tensor in tensors
-        ]
 
 
 class Simple_Model:
@@ -58,20 +27,22 @@ class Simple_Model:
     # the dimensions along which to concat the random variables during batching
     return_site_cat_dim: dict[str, int]
 
-    svi_pre_hooks: Collection[Callable[[], Any]]
-    svi_step_hooks: Collection[Callable[[], Any]]
-    svi_post_hooks: Collection[Callable[[], Any]]
+    # various hooks that may be run during SVI
+    svi_pre_hooks: Collection[Callable[[], Any]]  # before start
+    svi_step_hooks: Collection[Callable[[], Any]]  # after each step
+    svi_post_hooks: Collection[Callable[[], Any]]  # after svi is done
+    # like the hooks above, but these are passed the Model object
     svi_self_pre_hooks: Collection[Callable[[Simple_Model], Any]]
     svi_self_step_hooks: Collection[Callable[[Simple_Model], Any]]
     svi_self_post_hooks: Collection[Callable[[Simple_Model], Any]]
 
     @abstractmethod
-    def model(self, *args, batch: Optional[Collection[int]] = None, **kwargs):
+    def model(self, *args, **kwargs):
         """The prior model"""
         ...
 
     @abstractmethod
-    def guide(self, *args, batch: Optional[Collection[int]] = None, **kwargs):
+    def guide(self, *args, **kwargs):
         """The variational family that approximates the posterior on latent RVs"""
         ...
 
@@ -84,7 +55,7 @@ class Simple_Model:
     def run_svi(
         self,
         elbo: pyro.infer.ELBO,
-        data_loader: Iterator[tuple[bool, Sequence]],
+        data_loader: Data_Loader,
         initial_lr: float = 0.1,
         gamma: float = 0.1,
         betas: tuple[float, float] = (0.95, 0.999),
@@ -96,7 +67,7 @@ class Simple_Model:
         keep_prev_losses: bool = False,
     ) -> None:
         """
-        Run stochastic variational inference.
+        Run stochastic variational inference on the data given by the data loader.
 
         :param gamma: The decay rate of the learning rate.
             After 100 epochs, the learning rate will be multiplied with gamma.
@@ -107,8 +78,8 @@ class Simple_Model:
 
         for hook in self.svi_pre_hooks:
             hook()
-        for hook in self.svi_self_pre_hooks:
-            hook(self)
+        for self_hook in self.svi_self_pre_hooks:
+            self_hook(self)
 
         if not hasattr(self, "losses") or not keep_prev_losses:
             self.losses = list()
@@ -126,7 +97,7 @@ class Simple_Model:
         svi = pyro.infer.SVI(self.model, self.guide, optim, elbo)
 
         # collect the last z-scores using a ring buffer
-        z_scores = deque(maxlen=z_score_num)
+        z_scores: deque[float] = deque(maxlen=z_score_num)
 
         # progress bar / iterator over epochs
         epochs = trange(max_epochs, desc="svi steps", miniters=10)
@@ -143,8 +114,8 @@ class Simple_Model:
 
             for hook in self.svi_step_hooks:
                 hook()
-            for hook in self.svi_self_step_hooks:
-                hook(self)
+            for self_hook in self.svi_self_step_hooks:
+                self_hook(self)
 
             # compute the last z-score
             mean = np.mean(self.losses[-z_score_num:])
@@ -165,8 +136,8 @@ class Simple_Model:
 
         for hook in self.svi_post_hooks:
             hook()
-        for hook in self.svi_self_post_hooks:
-            hook(self)
+        for self_hook in self.svi_self_post_hooks:
+            self_hook(self)
 
     def predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
         """Return a Predictive object in order to generate posterior samples."""
@@ -192,10 +163,12 @@ class Simple_Model:
 
         posterior_samples = None
         # draw from the posterior in batches
-        batch_strategy = sequential_data_loader(*data_args, batch_size=batch_size)
-        batches = batch_to_list(batch_strategy)
+        data_loader = sequential_data_loader(*data_args, batch_size=batch_size)
+        batches = batch_to_list(data_loader)
         if progress_bar:
-            bar = tqdm(batches, desc="posterior sample")
+            bar: Iterable[Sequence[torch.Tensor]] = tqdm(
+                batches, desc="posterior sample"
+            )
         else:
             bar = batches
 
