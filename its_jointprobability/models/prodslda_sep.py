@@ -390,48 +390,35 @@ class Classification(Simple_Model):
         self.svi_post_hooks = []
 
 
-def retrain_model(
-    path: Path,
-    clear_store=True,
+def train_model(
+    data_loader: Data_Loader,
+    voc_size: int,
+    target_size: int,
     prodslda: Optional[ProdSLDA] = None,
     seed: Optional[int] = None,
-    max_epochs: int = 250,
     model_kwargs: Optional[dict[str, Any]] = None,
-    n: Optional[int] = None,
-    **kwargs,
+    initial_lr: float = 0.1,
+    gamma: float = 0.5,
+    num_particles: int = 1,
+    min_epochs: int = 100,
+    max_epochs: int = 1000,
+    device: Optional[torch.device] = None
 ) -> Classification:
-    ic(n)
+    pyro.set_rng_seed(seed)
+
     if model_kwargs is None:
         model_kwargs = dict()
 
-    train_data: torch.Tensor = torch.load(
-        path / "data", map_location=torch.device("cpu")
-    )[:n]
-    train_targets: torch.Tensor = torch.load(
-        path / "targets", map_location=torch.device("cpu")
-    )[:n]
-
-    if seed is not None:
-        pyro.set_rng_seed(seed)
-
-    if clear_store:
-        pyro.get_param_store().clear()
-
     if prodslda is None:
-        try:
-            prodslda = torch.load(path / "prodslda", map_location=device)
-            # if the model is None, the import was clearly not successful
-            if prodslda is None:
-                raise FileNotFoundError
-
-        except FileNotFoundError:
-            # if the topic model is missing, generate it
-            print("training topic model")
-            prodslda = prodslda_module.retrain_model(path, n=n)
+        print("training topic model")
+        prodslda = prodslda_module.train_model(
+            data_loader=data_loader, voc_size=voc_size, target_size=target_size, device=device
+        )
 
     print("training classification")
+
     model = Classification.with_priors(
-        target_size=train_targets.shape[-1],
+        target_size=target_size,
         prodslda=prodslda,
         observe_negative_targets=torch.tensor(True, device=device),
         device=device,
@@ -441,25 +428,56 @@ def retrain_model(
         **model_kwargs,
     )
 
-    batches = batch_to_list(
-        default_data_loader(train_data, train_targets, batch_size=len(train_data))
+    model.run_svi(
+        elbo=pyro.infer.Trace_ELBO(
+            num_particles=num_particles, vectorize_particles=True
+        ),
+        data_loader=data_loader,
+        initial_lr=initial_lr,
+        gamma=gamma,
+        min_epochs=min_epochs,
+        max_epochs=max_epochs,
     )
 
-    for index, batch in enumerate(batches):
-        print(f"epoch {index + 1} / {len(batches)}")
-        with pyro.poutine.scale(scale=train_data.shape[-2] / batch[0].shape[-2]):
-            model.bayesian_update(
-                batch[0],
-                batch[1],
-                initial_lr=0.1,
-                gamma=0.5,
-                num_particles=1,
-                max_epochs=max_epochs,
-                **kwargs,
-            )
+    # clean up hooks before saving the model to the disk
+    model.reset_hooks()
+    
+    return model
 
-    model.svi_self_step_hooks = []
 
+def retrain_model(
+    path: Path,
+    n: Optional[int] = None,
+    **kwargs,
+) -> Classification:
+    ic(n)
+
+    train_data: torch.Tensor = torch.load(
+        path / "data", map_location=torch.device("cpu")
+    )[:n]
+    train_targets: torch.Tensor = torch.load(
+        path / "targets", map_location=torch.device("cpu")
+    )[:n]
+
+    try:
+        prodslda = torch.load(path / "prodslda", map_location=device)
+    except FileNotFoundError:
+        prodslda = None
+
+    data_loader = default_data_loader(
+        train_data, train_targets, device=device, dtype=torch.float
+    )
+
+    model = train_model(
+        data_loader,
+        train_data.shape[-1],
+        train_targets.shape[-1],
+        prodslda,
+        device=device,
+        **kwargs,
+    )
+
+    torch.save(model.prodslda, path / "prodslda")
     torch.save(model, path / "classification")
 
     return model
@@ -524,13 +542,10 @@ def retrain_model_cli():
                     ),
                     freq=5,
                 )
-            ],
-            # clean up the hooks after SVI is done
-            "svi_self_post_hooks": [Classification.reset_hooks],
+            ]
         }
         if args.plot
         else None,
-        keep_prev_losses=True,
         n=args.n,
     )
 
@@ -550,26 +565,22 @@ def retrain_model_cli():
 
         fig.savefig("./training_process.png")
 
+    # evaluate the newly trained model
+    print("evaluating model on train data")
     uris: list[str] = torch.load(path / "uris")
     uri_title_dict: dict[str, str] = torch.load(path / "uri_title_dict")
     targets: list[str] = [uri_title_dict[uri] for uri in uris]
+    eval_model(model, train_data, train_targets, targets, device=device)
 
-    # evaluate the newly trained model on the training data
-    print("evaluating model on train data")
-    eval_model(model, train_data, train_targets, targets)
-
-    try:
-        # evaluate the newly trained model on the testing data
-        print("evaluating model on test data")
-        test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
+    if args.n is not None:
+        print("evaluating model on remaining data")
+        test_data: torch.Tensor = torch.load(
+            path / "data", map_location=torch.device("cpu")
+        )[args.n :]
         test_targets: torch.Tensor = torch.load(
-            path / "test_targets", map_location=device
-        )
-
-        eval_model(model, test_data, test_targets, targets)
-
-    except FileNotFoundError:
-        pass
+            path / "targets", map_location=torch.device("cpu")
+        )[args.n :]
+        eval_model(model, test_data, test_targets, targets, device=device)
 
 
 def eval_model(
@@ -577,6 +588,7 @@ def eval_model(
     data: torch.Tensor,
     targets: torch.Tensor,
     target_values: Iterable,
+    device: Optional[torch.device] = None,
 ) -> Quality_Result:
     ic.disable()
     samples = model.draw_posterior_samples(
@@ -638,10 +650,8 @@ def compare_to_wlo_classification(path: Path):
 
     test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
     test_targets: torch.Tensor = torch.load(path / "test_targets", map_location=device)
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_targets: torch.Tensor = torch.load(
-        path / "train_targets", map_location=device
-    )
+    train_data: torch.Tensor = torch.load(path / "data", map_location=device)
+    train_targets: torch.Tensor = torch.load(path / "targets", map_location=device)
 
     comps = []
 
