@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from its_jointprobability.models.model import Model
 from its_jointprobability.utils import (
+    Data_Loader,
     device,
     sequential_data_loader,
     texts_to_bow_tensor,
@@ -197,6 +198,49 @@ class ProdSLDA(Model):
         )
 
 
+def train_model(
+    data_loader: Data_Loader,
+    voc_size: int,
+    target_size: int,
+    num_topics: int = 400,
+    layers: int = 200,
+    dropout: float = 0.2,
+    nu_loc: float = 0.0,
+    nu_scale: float = 10.0,
+    min_epochs: int = 100,
+    max_epochs: int = 250,
+    initial_lr: float = 0.1,
+    gamma: float = 0.5,
+    device: Optional[torch.device] = None,
+    seed: int = 0,
+) -> ProdSLDA:
+    pyro.set_rng_seed(seed)
+
+    prodslda = ProdSLDA(
+        voc_size=voc_size,
+        target_size=target_size,
+        num_topics=num_topics,
+        layers=layers,
+        dropout=dropout,
+        nu_loc=nu_loc,
+        nu_scale=nu_scale,
+        observe_negative_targets=torch.tensor(True, device=device),
+    ).to(device)
+
+    prodslda.run_svi(
+        data_loader=data_loader,
+        elbo=pyro.infer.Trace_ELBO(num_particles=1),
+        min_epochs=min_epochs,
+        max_epochs=max_epochs,
+        initial_lr=initial_lr,
+        gamma=gamma,
+        metric_len=10,
+        min_rel_std=5 / 1000,
+    )
+
+    return prodslda.eval()
+
+
 def retrain_model(path: Path, n: Optional[int] = None) -> ProdSLDA:
     train_data: torch.Tensor = torch.load(
         path / "data",
@@ -207,19 +251,6 @@ def retrain_model(path: Path, n: Optional[int] = None) -> ProdSLDA:
         map_location=torch.device("cpu"),
     )[:n]
 
-    pyro.get_param_store().clear()
-
-    prodslda = ProdSLDA(
-        voc_size=train_data.shape[-1],
-        target_size=train_targets.shape[-1],
-        num_topics=400,
-        layers=200,
-        dropout=0.2,
-        nu_loc=0.0,
-        nu_scale=10.0,
-        observe_negative_targets=torch.tensor(True, device=device),
-    ).to(device)
-
     data_loader = default_data_loader(
         train_data,
         train_targets,
@@ -227,18 +258,14 @@ def retrain_model(path: Path, n: Optional[int] = None) -> ProdSLDA:
         dtype=torch.float,
     )
 
-    prodslda.run_svi(
+    prodslda = train_model(
         data_loader=data_loader,
-        elbo=pyro.infer.Trace_ELBO(num_particles=1),
-        min_epochs=100,
-        max_epochs=200,
-        initial_lr=0.1,
-        gamma=0.5,
-        metric_len=10,
-        min_rel_std=5 / 1000,
+        voc_size=train_data.shape[-1],
+        target_size=train_targets.shape[-1],
+        device=device,
+        seed=0,
     )
 
-    prodslda = prodslda.eval()
     torch.save(prodslda, path / "prodslda")
 
     return prodslda
