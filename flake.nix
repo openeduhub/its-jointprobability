@@ -66,6 +66,7 @@
             pyro-ppl
             icecream
             matplotlib
+            optuna
             (self.inputs.nlprep.lib.${system}.nlprep py-pkgs) # nlp pre-processing
           ];
 
