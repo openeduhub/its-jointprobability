@@ -209,7 +209,7 @@ class Quality_Result(BaseModel):
 
 def quality_measures(
     samples: torch.Tensor,
-    labels: torch.Tensor,
+    targets: torch.Tensor,
     cutoff: Optional[float] = None,
     mean_dim: Optional[int] = None,
     parallel_dim: Optional[int] = None,
@@ -233,7 +233,7 @@ def quality_measures(
 
         # the quality measures for each cutoff
         scores = [
-            quality_measures(samples, labels, float(cutoff), None, None, use_median)
+            quality_measures(samples, targets, float(cutoff), None, None, use_median)
             for cutoff in cutoffs
         ]
         f1_scores = torch.tensor([score.f1_score for score in scores]).nan_to_num()
@@ -241,10 +241,10 @@ def quality_measures(
         # select the cutoff where the F1 score is maximized
         optim_cutoff = float(cutoffs[f1_scores.argmax()])
         return quality_measures(
-            samples, labels, optim_cutoff, None, parallel_dim, use_median
+            samples, targets, optim_cutoff, None, parallel_dim, use_median
         )
 
-    labels = labels.bool()
+    targets = targets.bool()
     predictions = samples >= cutoff
 
     # negative indices start at the far right
@@ -257,10 +257,10 @@ def quality_measures(
     dims = [index for index in range(len(samples.shape)) if index not in parallel_dims]
 
     # compute the quality metrics
-    is_true_positive = torch.logical_and(labels, predictions)
-    is_true_negative = torch.logical_and(~labels, ~predictions)
-    is_false_positive = torch.logical_and(~labels, predictions)
-    is_false_negative = torch.logical_and(labels, ~predictions)
+    is_true_positive = torch.logical_and(targets, predictions)
+    is_true_negative = torch.logical_and(~targets, ~predictions)
+    is_false_positive = torch.logical_and(~targets, predictions)
+    is_false_negative = torch.logical_and(targets, ~predictions)
 
     tp = is_true_positive.sum(dims)  # true positives
     tn = is_true_negative.sum(dims)  # true negatives
