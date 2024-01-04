@@ -1,7 +1,10 @@
 setuptools
+pandas
 uvicorn
 pydantic
 fastapi
 pyro-ppl
-torch
+icecream
+matplotlib
+optuna
 nlprep

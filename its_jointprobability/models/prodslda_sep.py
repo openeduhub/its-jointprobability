@@ -31,6 +31,7 @@ from its_jointprobability.utils import (
 )
 from pyro.infer.enum import partial
 from tqdm import tqdm
+import optuna
 
 path = Path.cwd() / "data"
 
@@ -764,6 +765,56 @@ def compare_to_wlo_classification(path: Path):
     comps[1].to_csv(path / "comparison_train.csv")
 
     return comps
+
+
+def optimize_hyperparameters(path: Path, n: int = 3000):
+    data: torch.Tensor = torch.load(
+        path / "data",
+        map_location=torch.device("cpu"),
+    )
+    targets: torch.Tensor = torch.load(
+        path / "targets",
+        map_location=torch.device("cpu"),
+    )
+
+    full_data_loader = default_data_loader(
+        data, targets, batch_size=n, device=device, dtype=torch.float
+    )
+    _, first_batch = full_data_loader.__next__()
+
+    def objective(trial) -> float:
+        seed = 0
+        initial_lr = 0.1
+        gamma = 0.5
+        model = train_model(
+            default_data_loader(*first_batch),
+            voc_size=data.shape[-1],
+            target_size=targets.shape[-1],
+            seed=seed,
+            initial_lr=initial_lr,
+            gamma=gamma,
+            num_particles=1,
+            min_epochs=100,
+            max_epochs=250,
+        )
+
+        f1_score = quality_measures(
+            samples=model.draw_posterior_samples(
+                data_loader=sequential_data_loader(
+                    data, device=device, dtype=torch.float
+                ),
+                num_samples=100,
+                return_sites=["a"],
+            )["a"],
+            targets=targets.swapaxes(-1, -2).float().to(device),
+            mean_dim=0,
+        ).f1_score
+
+        assert isinstance(f1_score, float)
+        return 1 - f1_score
+
+    study = optuna.create_study()
+    study.optimize(objective, n_trials=100)
 
 
 if __name__ == "__main__":
