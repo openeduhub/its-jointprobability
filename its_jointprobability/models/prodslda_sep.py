@@ -20,6 +20,7 @@ from icecream import ic
 from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
+    Data_Loader,
     Quality_Result,
     batch_to_list,
     device,
@@ -43,14 +44,14 @@ class Classification(Simple_Model):
     These assigned topics are then used linearly for classification.
     """
 
-    return_sites = ("label", "nu", "a")
-    return_site_cat_dim = {"nu": 0, "a": -1, "label": -1}
+    return_sites = ("target", "nu", "a")
+    return_site_cat_dim = {"nu": 0, "a": -1, "target": -1}
 
     def __init__(
         self,
-        label_size: int,
+        target_size: int,
         prodslda: ProdSLDA,
-        observe_negative_labels: Optional[torch.Tensor] = None,
+        observe_negative_targets: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
         svi_pre_hooks: Optional[Collection[Callable[[], Any]]] = None,
         svi_step_hooks: Optional[Collection[Callable[[], Any]]] = None,
@@ -60,10 +61,10 @@ class Classification(Simple_Model):
         svi_self_post_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
         **kwargs,
     ):
-        self.label_size = label_size
-        self.observe_negative_labels = (
-            observe_negative_labels
-            if observe_negative_labels is not None
+        self.target_size = target_size
+        self.observe_negative_targets = (
+            observe_negative_targets
+            if observe_negative_targets is not None
             else torch.tensor(True, device=device)
         )
 
@@ -120,14 +121,14 @@ class Classification(Simple_Model):
     def nu_prior(
         self, *args, nu_loc: float = 0.0, nu_scale: float = 10.0, **kwargs
     ) -> torch.Tensor:
-        """The prior on the label x topic relevance-matrix."""
+        """The prior on the target x topic relevance-matrix."""
         return pyro.sample(
             "nu",
             dist.Normal(
                 nu_loc
-                * torch.ones(self.label_size, 1, self.num_topics, device=self.device),
+                * torch.ones(self.target_size, 1, self.num_topics, device=self.device),
                 nu_scale
-                * torch.ones(self.label_size, 1, self.num_topics, device=self.device),
+                * torch.ones(self.target_size, 1, self.num_topics, device=self.device),
             ).to_event(1),
         )
 
@@ -138,14 +139,14 @@ class Classification(Simple_Model):
         nu_scale: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
-        """The posterior on the label x topic revelance-matrix."""
+        """The posterior on the target x topic revelance-matrix."""
         nu_loc = (
             nu_loc
             if nu_loc is not None
             else pyro.param(
                 "nu_loc",
                 lambda: torch.randn(
-                    self.label_size, 1, self.num_topics, device=self.device
+                    self.target_size, 1, self.num_topics, device=self.device
                 ),
             )
         )
@@ -155,7 +156,7 @@ class Classification(Simple_Model):
             else pyro.param(
                 "nu_scale",
                 lambda: torch.ones(
-                    self.label_size, 1, self.num_topics, device=self.device
+                    self.target_size, 1, self.num_topics, device=self.device
                 ),
                 constraint=dist.constraints.positive,
             )
@@ -165,7 +166,7 @@ class Classification(Simple_Model):
     def a_prior(
         self, nu, theta, *args, a_scale: float = 10.0, **kwargs
     ) -> torch.Tensor:
-        """The prior on the applicability of each label, given the topic mix."""
+        """The prior on the applicability of each target, given the topic mix."""
         return pyro.sample(
             "a",
             dist.Normal(
@@ -177,7 +178,7 @@ class Classification(Simple_Model):
     def a_posterior(
         self, nu, theta, *args, a_scale: Optional[torch.Tensor] = None, **kwargs
     ):
-        """The posterior on the applicability of each label, given the topic mix."""
+        """The posterior on the applicability of each target, given the topic mix."""
 
         a_scale = (
             a_scale
@@ -185,7 +186,7 @@ class Classification(Simple_Model):
             else pyro.param(
                 "a_scale",
                 lambda: torch.ones(
-                    [self.label_size, 1, self.num_topics], device=self.device
+                    [self.target_size, 1, self.num_topics], device=self.device
                 ),
                 constraint=dist.constraints.positive,
             )
@@ -201,26 +202,26 @@ class Classification(Simple_Model):
     def model(
         self,
         docs: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
+        targets: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        labels_plate = pyro.plate("labels", self.label_size, dim=-2)
+        targets_plate = pyro.plate("targets", self.target_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", docs.shape[-2], dim=-1)
 
         with docs_plate:
             logtheta = self.logtheta_prior(docs)
             theta = F.softmax(logtheta, -1)
 
-        # the label application coefficients
-        with labels_plate:
+        # the target application coefficients
+        with targets_plate:
             nu = self.nu_prior()
 
         with docs_plate:
-            with labels_plate:
+            with targets_plate:
                 a = self.a_prior(nu, theta)
-                label = pyro.sample(
-                    "label",
+                target = pyro.sample(
+                    "target",
                     dist.Bernoulli(logits=a),  # type: ignore
-                    obs=labels.T if labels is not None else None,
+                    obs=targets.T if targets is not None else None,
                     infer={"enumerate": "parallel"},
                 )
 
@@ -229,22 +230,22 @@ class Classification(Simple_Model):
     def guide(
         self,
         docs: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
+        targets: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # essentially identical to the model,
         # but uses the posterior functions, rather than the prior ones
-        labels_plate = pyro.plate("labels", self.label_size, dim=-2)
+        targets_plate = pyro.plate("targets", self.target_size, dim=-2)
         docs_plate = pyro.plate("documents-cls", docs.shape[-2], dim=-1)
 
         with docs_plate:
             logtheta_q = self.logtheta_posterior(docs)
             theta_q = logtheta_q.softmax(-1)
 
-        with labels_plate:
+        with targets_plate:
             nu_q = self.nu_posterior()
 
         with docs_plate:
-            with labels_plate:
+            with targets_plate:
                 return self.a_posterior(nu_q, theta_q)
 
     def clean_up_posterior_samples(
@@ -278,9 +279,9 @@ class Classification(Simple_Model):
     @classmethod
     def with_priors(
         cls,
-        label_size: int,
+        target_size: int,
         prodslda: ProdSLDA,
-        observe_negative_labels: Optional[torch.Tensor] = None,
+        observe_negative_targets: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
         **kwargs,
     ) -> Classification:
@@ -291,9 +292,9 @@ class Classification(Simple_Model):
         which are passed to each prior function.
         """
         obj = cls(
-            label_size=label_size,
+            target_size=target_size,
             prodslda=prodslda,
-            observe_negative_labels=observe_negative_labels,
+            observe_negative_targets=observe_negative_targets,
             device=device,
             **kwargs,
         )
@@ -305,7 +306,7 @@ class Classification(Simple_Model):
     def bayesian_update(
         self,
         docs: torch.Tensor,
-        labels: torch.Tensor,
+        targets: torch.Tensor,
         num_particles=3,
         batch_size: Optional[int] = None,
         **kwargs,
@@ -317,13 +318,13 @@ class Classification(Simple_Model):
             num_particles=num_particles, vectorize_particles=True
         )
         data_loader = default_data_loader(
-            docs, labels, batch_size=batch_size, dtype=torch.float, device=device
+            docs, targets, batch_size=batch_size, dtype=torch.float, device=device
         )
 
         # run svi on the given data
         param_store = pyro.get_param_store()
         with param_store.scope() as svi:
-            self.run_svi(elbo, data_loader, **kwargs)
+            self.run_svi(elbo=elbo, data_loader=data_loader, **kwargs)
 
         with param_store.scope(svi):
             nu_loc = pyro.param("nu_loc").detach()
@@ -348,35 +349,45 @@ class Classification(Simple_Model):
         return pyro.infer.Predictive(model=self.model, *args, **kwargs)
 
     def calculate_accuracy(
-        self, docs: torch.Tensor, labels: torch.Tensor, batch_size: Optional[int] = None
+        self,
+        data_loader: Data_Loader,
+        num_samples: int = 1,
+        cutoff: Optional[float] = None,
     ) -> float:
+        """
+        Calculate the accuracy of the posterior distribution.
+
+        For efficiency this only works with one batch from the data loader
+        at a time. If the whole data set is to be assessed, ensure that
+        the given data loader always returns the entire data set.
+        """
+        _, batch = data_loader.__next__()
         return quality_measures(
             self.draw_posterior_samples(
-                data_loader=sequential_data_loader(
-                    docs,
-                    batch_size=batch_size,
-                    device=self.device,
-                    dtype=torch.float,
-                ),
-                num_samples=1,
-                return_sites=["label"],
+                data_loader=sequential_data_loader(batch[0]),
+                num_samples=num_samples,
+                return_sites=["target"],
                 progress_bar=False,
-            )["label"],
-            labels=labels,
-            cutoff=1.0,
+            )["target"],
+            targets=batch[1].swapaxes(-1, -2),
+            cutoff=cutoff,
         ).accuracy  # type: ignore
 
-    def append_to_accuracies_(
-        self,
-        docs: torch.Tensor,
-        labels: torch.Tensor,
-        batch_size: Optional[int] = None,
-        freq: int = 1,
-    ) -> None:
+    def append_to_accuracies_(self, data_loader: Data_Loader, freq: int = 1) -> None:
         if len(self.accuracies) % freq == 0:
-            self.accuracies.append(self.calculate_accuracy(docs, labels, batch_size))
+            self.accuracies.append(
+                self.calculate_accuracy(data_loader, num_samples=1, cutoff=1.0)
+            )
         else:
             self.accuracies.append(self.accuracies[-1])
+
+    def reset_hooks(self):
+        self.svi_self_pre_hooks = []
+        self.svi_self_step_hooks = []
+        self.svi_self_post_hooks = []
+        self.svi_pre_hooks = []
+        self.svi_step_hooks = []
+        self.svi_post_hooks = []
 
 
 def retrain_model(
@@ -386,17 +397,19 @@ def retrain_model(
     seed: Optional[int] = None,
     max_epochs: int = 250,
     model_kwargs: Optional[dict[str, Any]] = None,
+    n: Optional[int] = None,
     **kwargs,
 ) -> Classification:
+    ic(n)
     if model_kwargs is None:
         model_kwargs = dict()
 
     train_data: torch.Tensor = torch.load(
-        path / "train_data", map_location=torch.device("cpu")
-    )
-    train_labels: torch.Tensor = torch.load(
-        path / "train_labels", map_location=torch.device("cpu")
-    )
+        path / "data", map_location=torch.device("cpu")
+    )[:n]
+    train_targets: torch.Tensor = torch.load(
+        path / "targets", map_location=torch.device("cpu")
+    )[:n]
 
     if seed is not None:
         pyro.set_rng_seed(seed)
@@ -414,13 +427,13 @@ def retrain_model(
         except FileNotFoundError:
             # if the topic model is missing, generate it
             print("training topic model")
-            prodslda = prodslda_module.retrain_model(path)
+            prodslda = prodslda_module.retrain_model(path, n=n)
 
     print("training classification")
     model = Classification.with_priors(
-        label_size=train_labels.shape[-1],
+        target_size=train_targets.shape[-1],
         prodslda=prodslda,
-        observe_negative_labels=torch.tensor(True, device=device),
+        observe_negative_targets=torch.tensor(True, device=device),
         device=device,
         nu_loc=-4.0,  # prior probability of about 2% to assign a discipline
         nu_scale=5.0,
@@ -428,7 +441,9 @@ def retrain_model(
         **model_kwargs,
     )
 
-    batches = batch_to_list(default_data_loader(train_data, train_labels))
+    batches = batch_to_list(
+        default_data_loader(train_data, train_targets, batch_size=len(train_data))
+    )
 
     for index, batch in enumerate(batches):
         print(f"epoch {index + 1} / {len(batches)}")
@@ -436,13 +451,14 @@ def retrain_model(
             model.bayesian_update(
                 batch[0],
                 batch[1],
-                initial_lr=1,
+                initial_lr=0.1,
                 gamma=0.5,
-                num_particles=10,
+                num_particles=1,
                 max_epochs=max_epochs,
-                batch_size=batch[0].shape[-2],
                 **kwargs,
             )
+
+    model.svi_self_step_hooks = []
 
     torch.save(model, path / "classification")
 
@@ -469,14 +485,26 @@ def retrain_model_cli():
         default=250,
         help="The maximum number of training epochs per batch of data",
     )
+    parser.add_argument(
+        "-n",
+        type=int,
+        default=None,
+        help="The maximum number of training documents",
+    )
     parser.add_argument("--plot", action="store_true")
 
-    ic.disable()
+    ic.enable()
 
     args = parser.parse_args()
 
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+    train_data: torch.Tensor = torch.load(
+        path / "data",
+        map_location=torch.device("cpu"),
+    )[: args.n]
+    train_targets: torch.Tensor = torch.load(
+        path / "targets",
+        map_location=torch.device("cpu"),
+    )[: args.n]
 
     model = retrain_model(
         Path(args.path),
@@ -488,17 +516,23 @@ def retrain_model_cli():
             "svi_self_step_hooks": [
                 partial(
                     Classification.append_to_accuracies_,
-                    docs=train_data,
-                    labels=train_labels.swapaxes(-1, -2),
-                    freq=10,
+                    data_loader=default_data_loader(
+                        train_data,
+                        train_targets,
+                        device=device,
+                        dtype=torch.float,
+                    ),
+                    freq=5,
                 )
-            ]
-            if args.plot
-            else None
-        },
+            ],
+            # clean up the hooks after SVI is done
+            "svi_self_post_hooks": [Classification.reset_hooks],
+        }
+        if args.plot
+        else None,
         keep_prev_losses=True,
+        n=args.n,
     )
-    prodslda = torch.load(path / "prodslda", map_location=device)
 
     if args.plot:
         fig = plt.figure(figsize=(16, 9), dpi=100)
@@ -518,21 +552,21 @@ def retrain_model_cli():
 
     uris: list[str] = torch.load(path / "uris")
     uri_title_dict: dict[str, str] = torch.load(path / "uri_title_dict")
-    labels: list[str] = [uri_title_dict[uri] for uri in uris]
+    targets: list[str] = [uri_title_dict[uri] for uri in uris]
 
     # evaluate the newly trained model on the training data
     print("evaluating model on train data")
-    eval_model(model, train_data, train_labels, labels)
+    eval_model(model, train_data, train_targets, targets)
 
     try:
         # evaluate the newly trained model on the testing data
         print("evaluating model on test data")
         test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
-        test_labels: torch.Tensor = torch.load(
-            path / "test_labels", map_location=device
+        test_targets: torch.Tensor = torch.load(
+            path / "test_targets", map_location=device
         )
 
-        eval_model(model, test_data, test_labels, labels)
+        eval_model(model, test_data, test_targets, targets)
 
     except FileNotFoundError:
         pass
@@ -541,8 +575,8 @@ def retrain_model_cli():
 def eval_model(
     model: Simple_Model,
     data: torch.Tensor,
-    labels: torch.Tensor,
-    label_values: Iterable,
+    targets: torch.Tensor,
+    target_values: Iterable,
 ) -> Quality_Result:
     ic.disable()
     samples = model.draw_posterior_samples(
@@ -554,12 +588,14 @@ def eval_model(
         return_sites=["a"],
         num_samples=100,
     )["a"]
-    global_measures = quality_measures(samples, labels, mean_dim=0, cutoff=None)
+    global_measures = quality_measures(
+        samples, targets.to(device).float(), mean_dim=0, cutoff=None
+    )
     print(f"global measures: {global_measures}")
 
     by_discipline = quality_measures(
         samples,
-        labels,
+        targets.to(device).float(),
         mean_dim=-3,
         cutoff=global_measures.cutoff,
         parallel_dim=-1,
@@ -570,8 +606,8 @@ def eval_model(
             for key in ["accuracy", "precision", "recall", "f1_score"]
         }
     )
-    df["taxonid"] = label_values
-    df["count"] = labels.sum(-2).cpu()
+    df["taxonid"] = target_values
+    df["count"] = targets.sum(-2).cpu()
     df = df.set_index("taxonid")
     print(df.sort_values("f1_score", ascending=False))
 
@@ -601,13 +637,15 @@ def compare_to_wlo_classification(path: Path):
     title_values = [uri_title_dict[uri] for uri in uris]
 
     test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
-    test_labels: torch.Tensor = torch.load(path / "test_labels", map_location=device)
+    test_targets: torch.Tensor = torch.load(path / "test_targets", map_location=device)
     train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
+    train_targets: torch.Tensor = torch.load(
+        path / "train_targets", map_location=device
+    )
 
     comps = []
 
-    for data, labels in zip((test_data, train_data), (test_labels, train_labels)):
+    for data, targets in zip((test_data, train_data), (test_targets, train_targets)):
         api_url = "http://localhost:8080/predict_subjects"
         wlo_cls = list()
         with shelve.open(str(path / "wlo-classification")) as db:
@@ -629,7 +667,7 @@ def compare_to_wlo_classification(path: Path):
                 db[text] = prediction
                 wlo_cls.append(prediction)
 
-        wlo_cls_labels = [
+        wlo_cls_targets = [
             [
                 "http://w3id.org/openeduhub/vocabs/discipline/" + value["id"]
                 for value in entry
@@ -641,7 +679,7 @@ def compare_to_wlo_classification(path: Path):
 
         wlo_cls_indices = [
             [uris.index(value) for value in entry if value in uris_set]
-            for entry in wlo_cls_labels
+            for entry in wlo_cls_targets
         ]
 
         n = len(uris_set)
@@ -657,7 +695,7 @@ def compare_to_wlo_classification(path: Path):
         )
 
         qualities_wlo_cls = quality_measures(
-            wlo_cls_tensor.unsqueeze(0), labels, cutoff=1, parallel_dim=-1
+            wlo_cls_tensor.unsqueeze(0), targets, cutoff=1, parallel_dim=-1
         )
 
         samples = classification.draw_posterior_samples(
@@ -667,7 +705,7 @@ def compare_to_wlo_classification(path: Path):
 
         qualities_new = quality_measures(
             samples,
-            labels,
+            targets,
             mean_dim=0,
             parallel_dim=-1,
         )
@@ -681,7 +719,7 @@ def compare_to_wlo_classification(path: Path):
                         "precision": quality_measures.precision,
                         "recall": quality_measures.recall,
                         "f1-score": quality_measures.f1_score,
-                        "count": labels.sum(-2),
+                        "count": targets.sum(-2),
                     }
                 )
                 .set_index("taxonid")
@@ -704,8 +742,8 @@ def compare_to_wlo_classification(path: Path):
         joined = joined.drop(["count old", "count new"], axis=1)
 
         for metric in ["accuracy", "recall", "precision", "f1-score"]:
-            label_new, label_old = metric + " new", metric + " old"
-            joined[metric + " diff"] = joined[label_new] - joined[label_old]
+            target_new, target_old = metric + " new", metric + " old"
+            joined[metric + " diff"] = joined[target_new] - joined[target_old]
 
         joined = joined.sort_index(axis=1).sort_values("f1-score diff", ascending=False)
 

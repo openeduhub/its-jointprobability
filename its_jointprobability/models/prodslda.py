@@ -26,23 +26,23 @@ class ProdSLDA(Model):
     A modification of the ProdLDA model to support supervized classification.
     """
 
-    return_sites = ("label", "nu", "a")
-    return_site_cat_dim = {"nu": 0, "a": -1, "label": -1}
+    return_sites = ("target", "nu", "a")
+    return_site_cat_dim = {"nu": 0, "a": -1, "target": -1}
 
     def __init__(
         self,
         voc_size: int,
-        label_size: int,
+        target_size: int,
         num_topics: int,
         layers: int,
         dropout: float,
         nu_loc: float = 0.0,
         nu_scale: float = 10.0,
-        observe_negative_labels=torch.tensor(True),
+        observe_negative_targets=torch.tensor(True),
     ):
         super().__init__()
         self.vocab_size = voc_size
-        self.label_size = label_size
+        self.target_size = target_size
         self.num_topics = num_topics
         self.decoder = nn.Sequential(
             nn.Dropout(dropout),
@@ -63,31 +63,14 @@ class ProdSLDA(Model):
         to_pyro_module_(self.encoder)
         self.nu_loc = nu_loc
         self.nu_scale = nu_scale
-        self.observe_negative_labels = observe_negative_labels
+        self.observe_negative_targets = observe_negative_targets
 
-    def model(
-        self,
-        docs: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
-        batch: Optional[Collection[int]] = None,
-    ):
-        num_full_data = docs.shape[0]
-
-        if batch is not None:
-            batch_size = len(batch)
-            docs = docs[list(batch)].float()
-            labels = labels[list(batch)].float() if labels is not None else None
-        else:
-            batch_size = num_full_data
-            docs = docs.float()
-            labels = labels.float() if labels is not None else None
-
-        labels_plate = pyro.plate("labels", self.label_size, dim=-2)
+    def model(self, docs: torch.Tensor, targets: Optional[torch.Tensor] = None):
+        targets_plate = pyro.plate("targets", self.target_size, dim=-2)
         docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
-        scale = pyro.poutine.scale(scale=num_full_data / batch_size)
 
-        # # the label application coefficients
-        with labels_plate:
+        # # the target application coefficients
+        with targets_plate:
             nu = pyro.sample(
                 "nu",
                 dist.Normal(
@@ -96,7 +79,7 @@ class ProdSLDA(Model):
                 ).to_event(1),
             )
 
-        with docs_plate, scale:
+        with docs_plate:
             logtheta_loc = docs.new_zeros(self.num_topics)
             logtheta_scale = docs.new_ones(self.num_topics)
             logtheta = pyro.sample(
@@ -108,7 +91,7 @@ class ProdSLDA(Model):
 
         count_param = self.decoder(theta)
 
-        with docs_plate, scale:
+        with docs_plate:
             # Currently, PyTorch Multinomial requires `total_count` to be homogeneous.
             # Because the numbers of words across documents can vary,
             # we will use the maximum count accross documents here.
@@ -121,17 +104,12 @@ class ProdSLDA(Model):
                 obs=docs,
             )
 
-            with labels_plate:
+            with targets_plate:
                 a = pyro.sample("a", dist.Normal((nu.squeeze(-2) @ theta.T), 10))
-                label = pyro.sample(
-                    "label",
+                target = pyro.sample(
+                    "target",
                     dist.Bernoulli(logits=a),  # type: ignore
-                    obs=labels.T if labels is not None else None,
-                    # obs_mask=torch.logical_or(
-                    #     self.observe_negative_labels, labels.T.bool()
-                    # )
-                    # if labels is not None
-                    # else None,
+                    obs=targets.T if targets is not None else None,
                     infer={"enumerate": "parallel"},
                 )
 
@@ -144,50 +122,37 @@ class ProdSLDA(Model):
     def guide(
         self,
         docs: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
-        batch: Optional[Collection[int]] = None,
+        targets: Optional[torch.Tensor] = None,
     ):
-        num_full_data = docs.shape[0]
-
-        if batch is not None:
-            batch_size = len(batch)
-            docs = docs[list(batch)].float()
-            labels = labels[list(batch)].float() if labels is not None else None
-        else:
-            batch_size = num_full_data
-            docs = docs.float()
-            labels = labels.float() if labels is not None else None
-
-        labels_plate = pyro.plate("labels", self.label_size, dim=-2)
+        targets_plate = pyro.plate("targets", self.target_size, dim=-2)
         docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
-        scale = pyro.poutine.scale(scale=num_full_data / batch_size)
 
-        # variational parameters for the relationship between topics and labels
+        # variational parameters for the relationship between topics and targets
         mu_q = pyro.param(
             "mu",
-            lambda: torch.randn(self.label_size, self.num_topics)
+            lambda: torch.randn(self.target_size, self.num_topics)
             .unsqueeze(-2)
             .to(docs.device),
         )
         sigma_q = pyro.param(
             "sigma",
-            lambda: docs.new_ones(self.label_size, self.num_topics).unsqueeze(-2),
+            lambda: docs.new_ones(self.target_size, self.num_topics).unsqueeze(-2),
             constraint=dist.constraints.positive,
         )
 
-        with labels_plate:
+        with targets_plate:
             nu_q = pyro.sample("nu", dist.Normal(mu_q, sigma_q).to_event(1))
 
-        with docs_plate, scale:
+        with docs_plate:
             logtheta_q = pyro.sample(
                 "logtheta", dist.Normal(*self.logtheta_params(docs)).to_event(1)
             )
             theta_q = F.softmax(logtheta_q, -1)
 
-            with labels_plate:
+            with targets_plate:
                 a_q_scale = pyro.param(
                     "a_q_scale",
-                    lambda: docs.new_ones([self.label_size, self.num_topics]),
+                    lambda: docs.new_ones([self.target_size, self.num_topics]),
                     constraint=dist.constraints.positive,
                 )
                 a_q = pyro.sample(
@@ -200,8 +165,8 @@ class ProdSLDA(Model):
     def clean_up_posterior_samples(
         self, posterior_samples: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
-        if "label" in posterior_samples:
-            posterior_samples["label"] = posterior_samples["label"].swapaxes(-1, -2)
+        if "target" in posterior_samples:
+            posterior_samples["target"] = posterior_samples["target"].swapaxes(-1, -2)
         if "a" in posterior_samples:
             posterior_samples["a"] = posterior_samples["a"].swapaxes(-1, -2)
         if "nu" in posterior_samples:
@@ -232,33 +197,45 @@ class ProdSLDA(Model):
         )
 
 
-def retrain_model(path: Path, n=None) -> ProdSLDA:
-    train_data: torch.Tensor = torch.load(path / "train_data", map_location=device)
-    train_labels: torch.Tensor = torch.load(path / "train_labels", map_location=device)
-
-    if n is not None:
-        train_data = train_data[:n]
-        train_labels = train_labels[:n]
+def retrain_model(path: Path, n: Optional[int] = None) -> ProdSLDA:
+    train_data: torch.Tensor = torch.load(
+        path / "data",
+        map_location=torch.device("cpu"),
+    )[:n]
+    train_targets: torch.Tensor = torch.load(
+        path / "targets",
+        map_location=torch.device("cpu"),
+    )[:n]
 
     pyro.get_param_store().clear()
 
     prodslda = ProdSLDA(
         voc_size=train_data.shape[-1],
-        label_size=train_labels.shape[-1],
+        target_size=train_targets.shape[-1],
         num_topics=400,
         layers=200,
         dropout=0.2,
         nu_loc=0.0,
         nu_scale=10.0,
-        observe_negative_labels=torch.tensor(True, device=device),
+        observe_negative_targets=torch.tensor(True, device=device),
     ).to(device)
 
-    data_loader = default_data_loader(train_data, train_labels)
+    data_loader = default_data_loader(
+        train_data,
+        train_targets,
+        device=device,
+        dtype=torch.float,
+    )
 
     prodslda.run_svi(
         data_loader=data_loader,
         elbo=pyro.infer.Trace_ELBO(num_particles=1),
-        max_epochs=1000,
+        min_epochs=100,
+        max_epochs=200,
+        initial_lr=0.1,
+        gamma=0.5,
+        metric_len=10,
+        min_rel_std=5 / 1000,
     )
 
     prodslda = prodslda.eval()

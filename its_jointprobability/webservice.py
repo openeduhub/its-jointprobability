@@ -191,7 +191,7 @@ def main():
 
             model.bayesian_update(
                 docs=bows_tensor,
-                labels=labels_tensor,
+                targets=labels_tensor,
                 num_particles=10,
                 min_epochs=inp.num_train_iterations // 10,
                 max_epochs=inp.num_train_iterations,
