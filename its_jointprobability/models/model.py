@@ -13,6 +13,7 @@ import torch
 from its_jointprobability.utils import Data_Loader, batch_to_list
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
+from icecream import ic
 
 
 class Simple_Model:
@@ -53,13 +54,13 @@ class Simple_Model:
         elbo: pyro.infer.ELBO,
         data_loader: Data_Loader,
         initial_lr: float = 0.1,
-        gamma: float = 0.1,
-        betas: tuple[float, float] = (0.95, 0.999),
+        gamma: float = 0.5,
+        betas: tuple[float, float] = (0.9, 0.999),
         min_epochs: int = 100,
         max_epochs: int = 1000,
         min_rel_std: float = 0.01,
-        z_score_num: int = 10,
         min_z_score: float = 1.0,
+        metric_len: int = 10,
         keep_prev_losses: bool = False,
     ) -> None:
         """
@@ -80,27 +81,31 @@ class Simple_Model:
         if not hasattr(self, "losses") or not keep_prev_losses:
             self.losses = list()
 
+        one_epoch = batch_to_list(data_loader)
+        batches_per_epoch = len(one_epoch)
+        n = sum(len(batch[0]) for batch in one_epoch)
+
+        lrd = gamma ** (1 / (100 * batches_per_epoch))
+        ic(lrd)
         optim = pyro.optim.ClippedAdam(
             {
                 # initial learning rate
                 "lr": initial_lr,
                 # the decay of the learning rate per training step
-                "lrd": gamma ** (1 / 100),
+                "lrd": lrd,
                 # hyperparameters for the per-parameter momentum
                 "betas": betas,
             }
         )
         svi = pyro.infer.SVI(self.model, self.guide, optim, elbo)
 
-        # collect the last z-scores using a ring buffer
-        z_scores: deque[float] = deque(maxlen=z_score_num)
-
         # progress bar / iterator over epochs
         epochs = trange(max_epochs, desc="svi steps", miniters=10)
         for epoch in epochs:
             batch_losses = list()
             for last_batch_in_epoch, train_args in data_loader:
-                batch_losses.append(svi.step(*train_args))
+                with pyro.poutine.scale(scale=n / len(train_args[0])):
+                    batch_losses.append(svi.step(*train_args))
                 # break if this was the last batch
                 if last_batch_in_epoch:
                     break
@@ -113,20 +118,23 @@ class Simple_Model:
             for self_hook in self.svi_self_step_hooks:
                 self_hook(self)
 
-            # compute the last z-score
-            mean = np.mean(self.losses[-z_score_num:])
-            std = np.std(self.losses[-z_score_num:])
-            rel_std = np.abs(std / mean)  # type: ignore
-            z_scores.append(np.abs((self.losses[-1] - mean) / std))
+            # compute the metrics to determine whether to stop early
+            last_losses = torch.tensor(self.losses[-metric_len:])
+            mean = last_losses.mean()
+            std = last_losses.std()
+            rel_std = torch.abs(std / mean)
+            z_scores = torch.abs((last_losses - mean) / std)
 
             epochs.set_postfix(
-                epoch_loss=f"{self.losses[-1]:.2e}", z_score=f"{z_scores[-1]:.2f}"
+                epoch_loss=f"{self.losses[-1]:.2e}",
+                z_score=f"{z_scores[-1]:.2f}",
+                rel_std=f"{rel_std:.2e}",
             )
 
             if (
                 epoch > min_epochs
-                and all(z_score < min_z_score for z_score in z_scores)
                 and rel_std < min_rel_std
+                and (z_scores < min_z_score).all()
             ):
                 break
 
