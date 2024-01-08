@@ -1,3 +1,4 @@
+from functools import reduce
 import math
 import random
 from collections.abc import Iterable, Iterator, Sequence
@@ -8,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from nlprep import Collection, tokenize_documents
 from pydantic import BaseModel
+import numpy as np
 
 
 T = TypeVar("T")
@@ -15,6 +17,52 @@ T = TypeVar("T")
 
 # use CUDA if it is available; otherwise, use the CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def balanced_subset_mask(
+    target: torch.Tensor, target_size_per_category: Optional[int]
+) -> list[bool]:
+    def find_split(
+        tensor: torch.Tensor,
+        target_count: int,
+        index_bounds: Optional[tuple[int, int]] = None,
+    ) -> Optional[int]:
+        """Find the split point using binary search"""
+        if index_bounds is None:
+            index_bounds = (0, tensor.shape[-1] - 1)
+
+        index = int(np.mean(index_bounds))
+        lower_lim, upper_lim = index_bounds
+
+        if index >= tensor.shape[-1] or lower_lim > upper_lim:
+            return None
+
+        count = tensor[..., :index].sum()
+        if count == target_count:
+            return index
+        elif count < target_count:
+            return find_split(tensor, target_count, index_bounds=(index + 1, upper_lim))
+        else:
+            return find_split(tensor, target_count, index_bounds=(lower_lim, index - 1))
+
+    if target_size_per_category is None:
+        return [True for _ in range(len(target))]
+
+    # find the split point for each target category
+    splits = [
+        find_split(target[:, index], target_size_per_category)
+        for index in range(target.shape[-1])
+    ]
+
+    # get the indices for all relevant and necessary data
+    kept: list[torch.Tensor] = []
+    for index, split in enumerate(splits):
+        kept_category = torch.zeros_like(target[:, index])
+        kept_category[:split] = 1
+        kept.append(torch.logical_and(target[:, index], kept_category))
+    kept_tensor: torch.Tensor = reduce(torch.logical_or, kept)
+
+    return kept_tensor.tolist()
 
 
 def texts_to_bow_tensor(*texts, token_dict) -> torch.Tensor:
