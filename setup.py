@@ -17,6 +17,7 @@ setup(
         "console_scripts": [
             "its-jointprobability = its_jointprobability.webservice:main",
             "retrain-model = its_jointprobability.models.prodslda_sep:retrain_model_cli",
+            "study-prodslda = its_jointprobability.models.prodslda:run_optuna_study_cli"
         ]
     },
 )

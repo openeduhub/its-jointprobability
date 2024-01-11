@@ -1,9 +1,11 @@
+import argparse
 from collections.abc import Collection
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import nlprep.spacy.props as nlp
 import numpy as np
+import optuna
 import pyro
 import pyro.distributions as dist
 import pyro.infer
@@ -11,13 +13,15 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from its_jointprobability.models.model import Model
+from icecream import ic
+from its_jointprobability.models.model import Model, set_up_optuna_study
 from its_jointprobability.utils import (
     Data_Loader,
+    balanced_subset_mask,
+    default_data_loader,
     device,
     sequential_data_loader,
     texts_to_bow_tensor,
-    default_data_loader,
 )
 from pyro.nn.module import to_pyro_module_
 
@@ -39,6 +43,7 @@ class ProdSLDA(Model):
         dropout: float,
         nu_loc: float = 0.0,
         nu_scale: float = 10.0,
+        target_scale: float = 1.0,
         observe_negative_targets=torch.tensor(True),
     ):
         super().__init__()
@@ -54,9 +59,9 @@ class ProdSLDA(Model):
         to_pyro_module_(self.decoder)
         self.encoder = nn.Sequential(
             nn.Linear(voc_size, layers),
-            nn.Softplus(),
+            nn.ReLU(),
             nn.Linear(layers, layers),
-            nn.Softplus(),
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(layers, num_topics * 2),
             nn.BatchNorm1d(num_topics * 2, affine=False),
@@ -64,6 +69,7 @@ class ProdSLDA(Model):
         to_pyro_module_(self.encoder)
         self.nu_loc = nu_loc
         self.nu_scale = nu_scale
+        self.target_scale = target_scale
         self.observe_negative_targets = observe_negative_targets
 
     def model(self, docs: torch.Tensor, targets: Optional[torch.Tensor] = None):
@@ -106,17 +112,23 @@ class ProdSLDA(Model):
             )
 
             with targets_plate:
-                a = pyro.sample("a", dist.Normal((nu.squeeze(-2) @ theta.T), 10))
-                target = pyro.sample(
-                    "target",
-                    dist.Bernoulli(logits=a),  # type: ignore
-                    obs=targets.T if targets is not None else None,
-                    infer={"enumerate": "parallel"},
+                a = pyro.sample(
+                    "a",
+                    dist.Normal(
+                        torch.matmul(nu, theta.swapaxes(-1, -2)).squeeze(-2), 10
+                    ),
                 )
+                with pyro.poutine.scale(scale=self.target_scale):
+                    target = pyro.sample(
+                        "target",
+                        dist.Bernoulli(logits=a),  # type: ignore
+                        obs=targets.swapaxes(-1, -2) if targets is not None else None,
+                        infer={"enumerate": "parallel"},
+                    )
 
     def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         logtheta_loc, logtheta_logvar = self.encoder(doc).split(self.num_topics, -1)
-        logtheta_scale = (logtheta_logvar / 2).exp()
+        logtheta_scale = F.softplus(logtheta_logvar) + 1e-5
 
         return logtheta_loc, logtheta_scale
 
@@ -159,7 +171,8 @@ class ProdSLDA(Model):
                 a_q = pyro.sample(
                     "a",
                     dist.Normal(
-                        (nu_q.squeeze(-2) @ theta_q.T), (a_q_scale @ theta_q.T)
+                        torch.matmul(nu_q, theta_q.swapaxes(-1, -2)).squeeze(-2),
+                        torch.matmul(a_q_scale, theta_q.swapaxes(-1, -2)).squeeze(-2),
                     ),
                 )
 
@@ -198,19 +211,39 @@ class ProdSLDA(Model):
         )
 
 
+class Data(NamedTuple):
+    docs: torch.Tensor
+    targets: torch.Tensor
+
+
+def get_train_data(path: Path, n: Optional[int] = None) -> Data:
+    train_targets: torch.Tensor = torch.load(
+        path / "train_targets",
+        map_location=torch.device("cpu"),
+    )
+    kept = balanced_subset_mask(train_targets, n)
+
+    train_data: torch.Tensor = torch.load(
+        path / "train_data_labeled",
+        map_location=torch.device("cpu"),
+    )[kept]
+
+    return Data(docs=train_data, targets=train_targets[kept])
+
+
 def train_model(
     data_loader: Data_Loader,
     voc_size: int,
     target_size: int,
-    num_topics: int = 400,
-    layers: int = 200,
+    num_topics: int = 200,
+    layers: int = 100,
     dropout: float = 0.2,
     nu_loc: float = 0.0,
     nu_scale: float = 10.0,
     min_epochs: int = 100,
     max_epochs: int = 250,
     initial_lr: float = 0.1,
-    gamma: float = 0.5,
+    gamma: float = 1.0,
     device: Optional[torch.device] = None,
     seed: int = 0,
 ) -> ProdSLDA:
@@ -229,7 +262,7 @@ def train_model(
 
     prodslda.run_svi(
         data_loader=data_loader,
-        elbo=pyro.infer.Trace_ELBO(num_particles=1),
+        elbo=pyro.infer.Trace_ELBO(num_particles=3, vectorize_particles=False),
         min_epochs=min_epochs,
         max_epochs=max_epochs,
         initial_lr=initial_lr,
@@ -238,34 +271,135 @@ def train_model(
         min_rel_std=5 / 1000,
     )
 
+    ic(prodslda.training)
+
     return prodslda.eval()
 
 
-def retrain_model(path: Path, n: Optional[int] = None) -> ProdSLDA:
-    train_data: torch.Tensor = torch.load(
-        path / "data",
-        map_location=torch.device("cpu"),
-    )[:n]
-    train_targets: torch.Tensor = torch.load(
-        path / "targets",
-        map_location=torch.device("cpu"),
-    )[:n]
+def run_optuna_study(path: Path, n: int = 100, n_trials=25, seed: int = 0):
+    train_data = get_train_data(path, n=n)
 
-    data_loader = default_data_loader(
-        train_data,
-        train_targets,
-        device=device,
-        dtype=torch.float,
+    train_docs: torch.Tensor = train_data.docs
+    train_targets: torch.Tensor = train_data.targets
+
+    ic(train_docs.shape)
+    ic(train_targets.shape)
+    ic(train_targets.sum(-2))
+
+    test_docs: torch.Tensor = torch.load(
+        path / "test_data_labeled", map_location=torch.device("cpu")
+    )
+    test_targets: torch.Tensor = torch.load(
+        path / "test_targets", map_location=torch.device("cpu")
     )
 
-    prodslda = train_model(
-        data_loader=data_loader,
-        voc_size=train_data.shape[-1],
-        target_size=train_targets.shape[-1],
+    ic(test_docs.shape)
+    ic(test_targets.shape)
+    ic(test_targets.sum(-2))
+
+    objective = set_up_optuna_study(
+        factory=ProdSLDA,
+        data_loader=default_data_loader(
+            train_docs,
+            train_targets,
+            device=device,
+            dtype=torch.float,
+        ),
+        elbo_choices={
+            "Trace": pyro.infer.Trace_ELBO,
+            "TraceGraph": pyro.infer.TraceGraph_ELBO,
+        },
+        eval_fun_final=lambda obj: obj.calculate_metric(
+            test_docs,
+            targets=test_targets,
+            target_site="a",
+            metric="f1_score",
+            num_samples=100,
+            cutoff=None,
+            device=device,
+            mean_dim=0,
+        ),
+        eval_fun_prune=lambda obj, step, loss: (
+            obj.calculate_metric(
+                test_docs,
+                targets=test_targets,
+                target_site="a",
+                metric="f1_score",
+                num_samples=10,
+                cutoff=None,
+                device=device,
+            )
+        ),
+        eval_freq=5,
+        fix_model_kwargs={
+            "voc_size": train_docs.shape[-1],
+            "target_size": train_targets.shape[-1],
+            "nu_loc": 0,
+            "nu_scale": 10.0,
+            # "num_topics": 200,
+            # "layers": 100,
+            # "dropout": 0.2,
+        },
+        var_model_kwargs={
+            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 250, 25),
+            "layers": lambda trial: trial.suggest_int("layers", 50, 250, 10),
+            "dropout": lambda trial: trial.suggest_float("dropout", 0.0, 0.5, step=0.1),
+            "target_scale": lambda trial: trial.suggest_float("target_scale", 0.1, 10, log=True),
+        },
+        vectorize_particles=False,
+        gamma=lambda trial: 1.0,
+        initial_lr=lambda trial: 0.1,
+        min_epochs=5,
+        max_epochs=lambda trial: 480,
         device=device,
-        seed=0,
     )
 
-    torch.save(prodslda, path / "prodslda")
+    study = optuna.create_study(
+        study_name="ProdSLDA",
+        direction="maximize",
+        pruner=optuna.pruners.HyperbandPruner(),
+        sampler=optuna.samplers.TPESampler(seed=seed),
+        storage="sqlite:///prodslda.db",
+        load_if_exists=True,
+    )
+    study.set_user_attr("labeled_data_size", len(train_docs))
 
-    return prodslda
+    pyro.set_rng_seed(seed)
+
+    study.optimize(objective, n_trials=n_trials)
+
+    print(f"{study.best_value=}")
+    print(f"{study.best_params=}")
+    print(f"{study.best_trial=}")
+
+    fig = optuna.visualization.plot_param_importances(study)
+    fig.show()
+
+
+def run_optuna_study_cli():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "path",
+        type=str,
+        help="The path to the directory containing the training data",
+    )
+    parser.add_argument(
+        "-n",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "-m",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "--num-trials",
+        type=int,
+        default=25,
+    )
+
+    args = parser.parse_args()
+
+    path = Path(args.path)
+    run_optuna_study(path, args.n, args.m, args.num_trials)
