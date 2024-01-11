@@ -44,6 +44,7 @@ class ProdSLDA(Model):
         nu_loc: float = 0.0,
         nu_scale: float = 10.0,
         target_scale: float = 1.0,
+        use_batch_normalization: bool = True,
         observe_negative_targets=torch.tensor(True),
     ):
         super().__init__()
@@ -53,9 +54,10 @@ class ProdSLDA(Model):
         self.decoder = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(num_topics, voc_size),
-            nn.BatchNorm1d(voc_size, affine=False),
-            nn.Softmax(-1),
         )
+        if use_batch_normalization:
+            self.decoder.append(nn.BatchNorm1d(voc_size, affine=False))
+        self.decoder.append(nn.Softmax(-1))
         to_pyro_module_(self.decoder)
         self.encoder = nn.Sequential(
             nn.Linear(voc_size, layers),
@@ -64,8 +66,9 @@ class ProdSLDA(Model):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(layers, num_topics * 2),
-            nn.BatchNorm1d(num_topics * 2, affine=False),
         )
+        if use_batch_normalization:
+            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
         to_pyro_module_(self.encoder)
         self.nu_loc = nu_loc
         self.nu_scale = nu_scale
@@ -341,10 +344,15 @@ def run_optuna_study(path: Path, n: int = 100, n_trials=25, seed: int = 0):
             # "dropout": 0.2,
         },
         var_model_kwargs={
-            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 250, 25),
-            "layers": lambda trial: trial.suggest_int("layers", 50, 250, 10),
+            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500, 25),
+            "layers": lambda trial: trial.suggest_int("layers", 50, 500, 10),
             "dropout": lambda trial: trial.suggest_float("dropout", 0.0, 0.5, step=0.1),
-            "target_scale": lambda trial: trial.suggest_float("target_scale", 0.1, 10, log=True),
+            "target_scale": lambda trial: trial.suggest_float(
+                "target_scale", 0.1, 10, log=True
+            ),
+            "use_batch_normalization": lambda trial: trial.suggest_categorical(
+                "batch_normalization", [True, False]
+            ),
         },
         vectorize_particles=False,
         gamma=lambda trial: 1.0,
