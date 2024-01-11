@@ -56,7 +56,7 @@
         get-python = pkgs: pkgs.python310;
 
         ### list of python packages required to build / run the application
-        python-packages-build = py-pkgs:
+        python-packages-deploy = py-pkgs:
           with py-pkgs; [
             setuptools
             pandas
@@ -66,9 +66,17 @@
             pyro-ppl
             icecream
             matplotlib
-            optuna
             (self.inputs.nlprep.lib.${system}.nlprep py-pkgs) # nlp pre-processing
           ];
+
+        python-packages-build = py-pkgs:
+          with py-pkgs; [
+            optuna
+            # for plotting optuna importance
+            plotly
+            scikit-learn
+          ]
+          ++ (python-packages-deploy py-pkgs);
 
         ### list of python packages to include in the development environment
         # the development installation contains all build packages,
@@ -88,7 +96,7 @@
           ++ (python-packages-build py-pkgs);
 
         ### create the python package
-        python-pkg-lib = py-pkgs: py-pkgs.buildPythonPackage {
+        python-pkg-lib = pkgs: py-pkgs: py-pkgs.buildPythonPackage {
           pname = "its-jointprobability";
           version = "0.1.1";
           /*
@@ -110,11 +118,13 @@
             substituteInPlace its_jointprobability/*.py \
               --replace "Path.cwd() / \"data\"" "Path(\"${./data}\")"
           '';
-          propagatedBuildInputs = (python-packages-build py-pkgs);
+          propagatedBuildInputs =
+            (python-packages-build py-pkgs)
+            ++ [ pkgs.sqlite ];
           doCheck = false;
         };
 
-        get-python-package = pkgs: python-pkg-lib (get-python pkgs).pkgs;
+        get-python-package = pkgs: python-pkg-lib pkgs (get-python pkgs).pkgs;
         get-python-application = pkgs: (get-python pkgs).pkgs.toPythonApplication (get-python-package pkgs);
 
         get-devShell = pkgs: pkgs.mkShell {
