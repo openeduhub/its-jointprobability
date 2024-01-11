@@ -22,6 +22,7 @@ from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
     Data_Loader,
     Quality_Result,
+    balanced_subset_mask,
     batch_to_list,
     device,
     quality_measures,
@@ -54,12 +55,12 @@ class Classification(Simple_Model):
         prodslda: ProdSLDA,
         observe_negative_targets: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
-        svi_pre_hooks: Optional[Collection[Callable[[], Any]]] = None,
-        svi_step_hooks: Optional[Collection[Callable[[], Any]]] = None,
-        svi_post_hooks: Optional[Collection[Callable[[], Any]]] = None,
-        svi_self_pre_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
-        svi_self_step_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
-        svi_self_post_hooks: Optional[Collection[Callable[[Simple_Model], Any]]] = None,
+        svi_pre_hooks: Optional[list[Callable[[], Any]]] = None,
+        svi_step_hooks: Optional[list[Callable[[int, float], Any]]] = None,
+        svi_post_hooks: Optional[list[Callable[[], Any]]] = None,
+        svi_self_pre_hooks: Optional[list[Callable[[Simple_Model, ], Any]]] = None,
+        svi_self_step_hooks: Optional[list[Callable[[Simple_Model, int, float], Any]]] = None,
+        svi_self_post_hooks: Optional[list[Callable[[Simple_Model], Any]]] = None,
         **kwargs,
     ):
         self.target_size = target_size
@@ -445,45 +446,6 @@ def train_model(
     
     return model
 
-
-def retrain_model(
-    path: Path,
-    n: Optional[int] = None,
-    **kwargs,
-) -> Classification:
-    ic(n)
-
-    train_data: torch.Tensor = torch.load(
-        path / "data", map_location=torch.device("cpu")
-    )[:n]
-    train_targets: torch.Tensor = torch.load(
-        path / "targets", map_location=torch.device("cpu")
-    )[:n]
-
-    try:
-        prodslda = torch.load(path / "prodslda", map_location=device)
-    except FileNotFoundError:
-        prodslda = None
-
-    data_loader = default_data_loader(
-        train_data, train_targets, device=device, dtype=torch.float
-    )
-
-    model = train_model(
-        data_loader,
-        train_data.shape[-1],
-        train_targets.shape[-1],
-        prodslda,
-        device=device,
-        **kwargs,
-    )
-
-    torch.save(model.prodslda, path / "prodslda")
-    torch.save(model, path / "classification")
-
-    return model
-
-
 def retrain_model_cli():
     """Add some CLI arguments to the retraining of the model."""
     parser = argparse.ArgumentParser()
@@ -515,18 +477,37 @@ def retrain_model_cli():
     ic.enable()
 
     args = parser.parse_args()
+    path = Path(args.path)
 
-    train_data: torch.Tensor = torch.load(
-        path / "data",
+    data: torch.Tensor = torch.load(
+        path / "train_data_labeled",
         map_location=torch.device("cpu"),
-    )[: args.n]
-    train_targets: torch.Tensor = torch.load(
-        path / "targets",
+    )
+    targets: torch.Tensor = torch.load(
+        path / "train_targets",
         map_location=torch.device("cpu"),
-    )[: args.n]
+    )
 
-    model = retrain_model(
-        Path(args.path),
+    train_ids = torch.Tensor(balanced_subset_mask(targets, args.n)).bool()
+    train_data = data[train_ids]
+    train_targets = targets[train_ids]
+    ic(train_targets.sum(-2))
+
+    data_loader = default_data_loader(
+        train_data, train_targets, device=device, dtype=torch.float
+    )
+
+    try:
+        prodslda = torch.load(path / "prodslda", map_location=device)
+    except FileNotFoundError:
+        prodslda = None
+
+    model = train_model(
+        data_loader,
+        train_data.shape[-1],
+        train_targets.shape[-1],
+        prodslda,
+        device=device,
         seed=args.seed,
         max_epochs=args.max_epochs,
         # if plotting the training process,
@@ -547,8 +528,10 @@ def retrain_model_cli():
         }
         if args.plot
         else None,
-        n=args.n,
     )
+
+    torch.save(model.prodslda, path / "prodslda")
+    torch.save(model, path / "classification")
 
     if args.plot:
         fig = plt.figure(figsize=(16, 9), dpi=100)
@@ -570,19 +553,30 @@ def retrain_model_cli():
     print("evaluating model on train data")
     uris: list[str] = torch.load(path / "uris")
     uri_title_dict: dict[str, str] = torch.load(path / "uri_title_dict")
-    targets: list[str] = [uri_title_dict[uri] for uri in uris]
-    eval_model(model, train_data, train_targets, targets, device=device)
+    titles: list[str] = [uri_title_dict[uri] for uri in uris]
+    eval_model(model, train_data, train_targets, titles, device=device)
+    print("prodslda raw")
+    eval_model(model.prodslda, train_data, train_targets, titles, device=device)
 
     if args.n is not None:
         print("evaluating model on remaining data")
-        test_data: torch.Tensor = torch.load(
-            path / "data", map_location=torch.device("cpu")
-        )[args.n :]
-        test_targets: torch.Tensor = torch.load(
-            path / "targets", map_location=torch.device("cpu")
-        )[args.n :]
-        eval_model(model, test_data, test_targets, targets, device=device)
+        test_data = data[~train_ids]
+        test_targets = targets[~train_ids]
+        eval_model(model, test_data, test_targets, titles, device=device)
+        print("prodslda raw")
+        eval_model(model.prodslda, test_data, test_targets, titles, device=device)
 
+
+    try:
+        test_data = torch.load(path / "test_data_labeled", map_location=torch.device("cpu"))
+        test_targets = torch.load(path / "test_targets", map_location=torch.device("cpu"))
+        print("evaluating model on test data")
+        eval_model(model, test_data, test_targets, titles, device=device)
+        print("prodslda raw")
+        eval_model(model.prodslda, test_data, test_targets, titles, device=device)
+
+    except FileNotFoundError:
+        pass
 
 def eval_model(
     model: Simple_Model,
@@ -649,10 +643,10 @@ def compare_to_wlo_classification(path: Path):
     classification, dictionary, uris, uri_title_dict = import_data(path)
     title_values = [uri_title_dict[uri] for uri in uris]
 
-    test_data: torch.Tensor = torch.load(path / "test_data", map_location=device)
+    test_data: torch.Tensor = torch.load(path / "test_data_labeled", map_location=device)
     test_targets: torch.Tensor = torch.load(path / "test_targets", map_location=device)
-    train_data: torch.Tensor = torch.load(path / "data", map_location=device)
-    train_targets: torch.Tensor = torch.load(path / "targets", map_location=device)
+    train_data: torch.Tensor = torch.load(path / "train_data_labeled", map_location=device)
+    train_targets: torch.Tensor = torch.load(path / "train_targets", map_location=device)
 
     comps = []
 
@@ -769,11 +763,11 @@ def compare_to_wlo_classification(path: Path):
 
 def optimize_hyperparameters(path: Path, n: int = 3000):
     data: torch.Tensor = torch.load(
-        path / "data",
+        path / "train_data_labeled",
         map_location=torch.device("cpu"),
     )
     targets: torch.Tensor = torch.load(
-        path / "targets",
+        path / "train_targets",
         map_location=torch.device("cpu"),
     )
 
