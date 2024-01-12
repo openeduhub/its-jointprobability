@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import math
 from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+import its_jointprobability.data.disciplines as disciplines
 import its_jointprobability.models.prodslda as prodslda_module
-import matplotlib.pyplot as plt
 import pandas as pd
-import numpy as np
 import pyro
 import pyro.distributions as dist
 import pyro.infer
@@ -17,22 +15,19 @@ import pyro.optim
 import torch
 import torch.nn.functional as F
 from icecream import ic
+from its_jointprobability.data.disciplines import get_test_data, get_train_data
 from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 from its_jointprobability.utils import (
     Data_Loader,
     Quality_Result,
-    balanced_subset_mask,
-    batch_to_list,
-    device,
+    default_data_loader,
     quality_measures,
     sequential_data_loader,
     texts_to_bow_tensor,
-    default_data_loader,
 )
 from pyro.infer.enum import partial
 from tqdm import tqdm
-import optuna
 
 path = Path.cwd() / "data"
 
@@ -58,8 +53,19 @@ class Classification(Simple_Model):
         svi_pre_hooks: Optional[list[Callable[[], Any]]] = None,
         svi_step_hooks: Optional[list[Callable[[int, float], Any]]] = None,
         svi_post_hooks: Optional[list[Callable[[], Any]]] = None,
-        svi_self_pre_hooks: Optional[list[Callable[[Simple_Model, ], Any]]] = None,
-        svi_self_step_hooks: Optional[list[Callable[[Simple_Model, int, float], Any]]] = None,
+        svi_self_pre_hooks: Optional[
+            list[
+                Callable[
+                    [
+                        Simple_Model,
+                    ],
+                    Any,
+                ]
+            ]
+        ] = None,
+        svi_self_step_hooks: Optional[
+            list[Callable[[Simple_Model, int, float], Any]]
+        ] = None,
         svi_self_post_hooks: Optional[list[Callable[[Simple_Model], Any]]] = None,
         **kwargs,
     ):
@@ -272,7 +278,7 @@ class Classification(Simple_Model):
         bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
         return self.draw_posterior_samples(
             data_loader=sequential_data_loader(
-                bow_tensor, device=device, dtype=torch.float
+                bow_tensor, device=self.device, dtype=torch.float
             ),
             num_samples=num_samples,
             return_sites=return_sites,
@@ -320,7 +326,7 @@ class Classification(Simple_Model):
             num_particles=num_particles, vectorize_particles=True
         )
         data_loader = default_data_loader(
-            docs, targets, batch_size=batch_size, dtype=torch.float, device=device
+            docs, targets, batch_size=batch_size, dtype=torch.float, device=self.device
         )
 
         # run svi on the given data
@@ -350,47 +356,6 @@ class Classification(Simple_Model):
         """
         return pyro.infer.Predictive(model=self.model, *args, **kwargs)
 
-    def calculate_accuracy(
-        self,
-        data_loader: Data_Loader,
-        num_samples: int = 1,
-        cutoff: Optional[float] = None,
-    ) -> float:
-        """
-        Calculate the accuracy of the posterior distribution.
-
-        For efficiency this only works with one batch from the data loader
-        at a time. If the whole data set is to be assessed, ensure that
-        the given data loader always returns the entire data set.
-        """
-        _, batch = data_loader.__next__()
-        return quality_measures(
-            self.draw_posterior_samples(
-                data_loader=sequential_data_loader(batch[0]),
-                num_samples=num_samples,
-                return_sites=["target"],
-                progress_bar=False,
-            )["target"],
-            targets=batch[1].swapaxes(-1, -2),
-            cutoff=cutoff,
-        ).accuracy  # type: ignore
-
-    def append_to_accuracies_(self, data_loader: Data_Loader, freq: int = 1) -> None:
-        if len(self.accuracies) % freq == 0:
-            self.accuracies.append(
-                self.calculate_accuracy(data_loader, num_samples=1, cutoff=1.0)
-            )
-        else:
-            self.accuracies.append(self.accuracies[-1])
-
-    def reset_hooks(self):
-        self.svi_self_pre_hooks = []
-        self.svi_self_step_hooks = []
-        self.svi_self_post_hooks = []
-        self.svi_pre_hooks = []
-        self.svi_step_hooks = []
-        self.svi_post_hooks = []
-
 
 def train_model(
     data_loader: Data_Loader,
@@ -404,7 +369,7 @@ def train_model(
     num_particles: int = 1,
     min_epochs: int = 100,
     max_epochs: int = 1000,
-    device: Optional[torch.device] = None
+    device: Optional[torch.device] = None,
 ) -> Classification:
     pyro.set_rng_seed(seed)
 
@@ -414,7 +379,10 @@ def train_model(
     if prodslda is None:
         print("training topic model")
         prodslda = prodslda_module.train_model(
-            data_loader=data_loader, voc_size=voc_size, target_size=target_size, device=device
+            data_loader=data_loader,
+            voc_size=voc_size,
+            target_size=target_size,
+            device=device,
         )
 
     print("training classification")
@@ -441,10 +409,8 @@ def train_model(
         max_epochs=max_epochs,
     )
 
-    # clean up hooks before saving the model to the disk
-    model.reset_hooks()
-    
     return model
+
 
 def retrain_model_cli():
     """Add some CLI arguments to the retraining of the model."""
@@ -472,137 +438,83 @@ def retrain_model_cli():
         default=None,
         help="The maximum number of training documents",
     )
-    parser.add_argument("--plot", action="store_true")
 
     ic.enable()
 
     args = parser.parse_args()
     path = Path(args.path)
 
-    data: torch.Tensor = torch.load(
-        path / "train_data_labeled",
-        map_location=torch.device("cpu"),
-    )
-    targets: torch.Tensor = torch.load(
-        path / "train_targets",
-        map_location=torch.device("cpu"),
-    )
+    train_data = get_train_data(path, n=args.n)
+    train_docs = train_data.docs
+    train_targets = train_data.targets
 
-    train_ids = torch.Tensor(balanced_subset_mask(targets, args.n)).bool()
-    train_data = data[train_ids]
-    train_targets = targets[train_ids]
-    ic(train_targets.sum(-2))
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_loader = default_data_loader(
-        train_data, train_targets, device=device, dtype=torch.float
+        train_docs, train_targets, device=device, dtype=torch.float
     )
 
     try:
-        prodslda = torch.load(path / "prodslda", map_location=device)
+        prodslda, _ = prodslda_module.import_model(path, device=device)
     except FileNotFoundError:
         prodslda = None
 
     model = train_model(
         data_loader,
-        train_data.shape[-1],
+        train_docs.shape[-1],
         train_targets.shape[-1],
         prodslda,
         device=device,
         seed=args.seed,
         max_epochs=args.max_epochs,
-        # if plotting the training process,
-        # calculate the training data accuracy after every few epochs
-        model_kwargs={
-            "svi_self_step_hooks": [
-                partial(
-                    Classification.append_to_accuracies_,
-                    data_loader=default_data_loader(
-                        train_data,
-                        train_targets,
-                        device=device,
-                        dtype=torch.float,
-                    ),
-                    freq=5,
-                )
-            ]
-        }
-        if args.plot
-        else None,
     )
 
     torch.save(model.prodslda, path / "prodslda")
     torch.save(model, path / "classification")
 
-    if args.plot:
-        fig = plt.figure(figsize=(16, 9), dpi=100)
-        ax1 = fig.add_subplot(2, 1, 1)
-        ax1.plot(model.losses)
-        ax1.set_yscale("symlog")
-        ax1.set_title("Loss function")
-        ax1.set_ylabel("Negative ELBO")
-        ax2 = fig.add_subplot(2, 1, 2)
-        ax2.plot(model.accuracies)
-        ax2.set_yscale("symlog")
-        ax2.set_title("Training set accuracy")
-        ax2.set_xlabel("Training epoch")
-        ax2.set_ylabel("Accuracy")
-
-        fig.savefig("./training_process.png")
+    # load the list of discipline titles for more readable outputs
+    titles = disciplines.get_metadata(path).titles
 
     # evaluate the newly trained model
     print("evaluating model on train data")
-    uris: list[str] = torch.load(path / "uris")
-    uri_title_dict: dict[str, str] = torch.load(path / "uri_title_dict")
-    titles: list[str] = [uri_title_dict[uri] for uri in uris]
-    eval_model(model, train_data, train_targets, titles, device=device)
+    eval_model(model, train_docs, train_targets, titles)
     print("prodslda raw")
-    eval_model(model.prodslda, train_data, train_targets, titles, device=device)
+    eval_model(model.prodslda, train_docs, train_targets, titles)
 
-    if args.n is not None:
-        print("evaluating model on remaining data")
-        test_data = data[~train_ids]
-        test_targets = targets[~train_ids]
-        eval_model(model, test_data, test_targets, titles, device=device)
-        print("prodslda raw")
-        eval_model(model.prodslda, test_data, test_targets, titles, device=device)
+    test_data = get_test_data(path)
+    test_docs = test_data.docs
+    test_targets = test_data.targets
+    print("evaluating model on test data")
+    eval_model(model, test_docs, test_targets, titles)
+    print("prodslda raw")
+    eval_model(model.prodslda, test_docs, test_targets, titles)
 
-
-    try:
-        test_data = torch.load(path / "test_data_labeled", map_location=torch.device("cpu"))
-        test_targets = torch.load(path / "test_targets", map_location=torch.device("cpu"))
-        print("evaluating model on test data")
-        eval_model(model, test_data, test_targets, titles, device=device)
-        print("prodslda raw")
-        eval_model(model.prodslda, test_data, test_targets, titles, device=device)
-
-    except FileNotFoundError:
-        pass
 
 def eval_model(
     model: Simple_Model,
     data: torch.Tensor,
     targets: torch.Tensor,
     target_values: Iterable,
-    device: Optional[torch.device] = None,
 ) -> Quality_Result:
-    ic.disable()
-    samples = model.draw_posterior_samples(
-        data_loader=sequential_data_loader(
-            data,
-            device=device,
-            dtype=torch.float,
-        ),
-        return_sites=["a"],
-        num_samples=100,
-    )["a"]
+    ic(model.device)
+    samples = F.sigmoid(
+        model.draw_posterior_samples(
+            data_loader=sequential_data_loader(
+                data,
+                device=model.device,
+                dtype=torch.float,
+            ),
+            return_sites=["a"],
+            num_samples=100,
+        )["a"]
+    )
     global_measures = quality_measures(
-        samples, targets.to(device).float(), mean_dim=0, cutoff=None
+        samples, targets.to(model.device).float(), mean_dim=0, cutoff=None
     )
     print(f"global measures: {global_measures}")
 
     by_discipline = quality_measures(
         samples,
-        targets.to(device).float(),
+        targets.to(model.device).float(),
         mean_dim=-3,
         cutoff=global_measures.cutoff,
         parallel_dim=-1,
@@ -621,42 +533,45 @@ def eval_model(
     return by_discipline
 
 
-def import_data(
-    path: Path,
-) -> tuple[Classification, dict[int, str], list[str], dict[str, str]]:
-    classification = torch.load(path / "classification", map_location=device)
+def import_model(
+    path: Path, device: Optional[torch.device] = None
+) -> tuple[Classification, disciplines.Meta_Data]:
+    model = torch.load(path / "classification", map_location=device)
     # ensure that the model is running on the correct device
     # this does not get changed by setting the map location above
-    classification.device = device
-    dictionary = torch.load(path / "dictionary")
-    uris = torch.load(path / "uris")
-    uri_title_dict = torch.load(path / "uri_title_dict")
+    model.device = device
 
-    return classification, dictionary, uris, uri_title_dict
+    metadata = disciplines.get_metadata(path)
+    return model, metadata
 
 
-def compare_to_wlo_classification(path: Path):
+def compare_to_wlo_classification(
+    path: Path, n: Optional[int] = None, device: Optional[torch.device] = None
+):
     import shelve
 
     import requests
 
-    classification, dictionary, uris, uri_title_dict = import_data(path)
-    title_values = [uri_title_dict[uri] for uri in uris]
+    classification, metadata = import_model(path, device=device)
+    title_values = [metadata.uri_title_dict[uri] for uri in metadata.uris]
 
-    test_data: torch.Tensor = torch.load(path / "test_data_labeled", map_location=device)
-    test_targets: torch.Tensor = torch.load(path / "test_targets", map_location=device)
-    train_data: torch.Tensor = torch.load(path / "train_data_labeled", map_location=device)
-    train_targets: torch.Tensor = torch.load(path / "train_targets", map_location=device)
+    test_data = get_test_data(path)
+    test_docs = test_data.docs
+    test_targets = test_data.targets
+
+    train_data = get_train_data(path, n=n)
+    train_docs = train_data.docs
+    train_targets = train_data.targets
 
     comps = []
 
-    for data, targets in zip((test_data, train_data), (test_targets, train_targets)):
+    for data, targets in zip((test_docs, train_docs), (test_targets, train_targets)):
         api_url = "http://localhost:8080/predict_subjects"
         wlo_cls = list()
         with shelve.open(str(path / "wlo-classification")) as db:
             for bow in tqdm(data):
                 ids = torch.repeat_interleave(bow.int())
-                tokens = [dictionary[int(index)] for index in ids]
+                tokens = [metadata.word_id_meanings[int(index)] for index in ids]
                 text = " ".join(tokens)
 
                 if text in db:
@@ -680,10 +595,10 @@ def compare_to_wlo_classification(path: Path):
             for entry in wlo_cls
         ]
 
-        uris_set = set(uris)
+        uris_set = set(metadata.uris)
 
         wlo_cls_indices = [
-            [uris.index(value) for value in entry if value in uris_set]
+            [metadata.uris.index(value) for value in entry if value in uris_set]
             for entry in wlo_cls_targets
         ]
 
@@ -709,7 +624,7 @@ def compare_to_wlo_classification(path: Path):
         )["a"]
 
         qualities_new = quality_measures(
-            samples,
+            F.sigmoid(samples),
             targets,
             mean_dim=0,
             parallel_dim=-1,
@@ -759,56 +674,6 @@ def compare_to_wlo_classification(path: Path):
     comps[1].to_csv(path / "comparison_train.csv")
 
     return comps
-
-
-def optimize_hyperparameters(path: Path, n: int = 3000):
-    data: torch.Tensor = torch.load(
-        path / "train_data_labeled",
-        map_location=torch.device("cpu"),
-    )
-    targets: torch.Tensor = torch.load(
-        path / "train_targets",
-        map_location=torch.device("cpu"),
-    )
-
-    full_data_loader = default_data_loader(
-        data, targets, batch_size=n, device=device, dtype=torch.float
-    )
-    _, first_batch = full_data_loader.__next__()
-
-    def objective(trial) -> float:
-        seed = 0
-        initial_lr = 0.1
-        gamma = 0.5
-        model = train_model(
-            default_data_loader(*first_batch),
-            voc_size=data.shape[-1],
-            target_size=targets.shape[-1],
-            seed=seed,
-            initial_lr=initial_lr,
-            gamma=gamma,
-            num_particles=1,
-            min_epochs=100,
-            max_epochs=250,
-        )
-
-        f1_score = quality_measures(
-            samples=model.draw_posterior_samples(
-                data_loader=sequential_data_loader(
-                    data, device=device, dtype=torch.float
-                ),
-                num_samples=100,
-                return_sites=["a"],
-            )["a"],
-            targets=targets.swapaxes(-1, -2).float().to(device),
-            mean_dim=0,
-        ).f1_score
-
-        assert isinstance(f1_score, float)
-        return 1 - f1_score
-
-    study = optuna.create_study()
-    study.optimize(objective, n_trials=100)
 
 
 if __name__ == "__main__":

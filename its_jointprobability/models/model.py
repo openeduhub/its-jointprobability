@@ -1,26 +1,27 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections import deque
 from collections.abc import Callable, Collection, Iterable, Sequence
 from functools import partial
-from typing import Any, Optional, TypeVar, Literal
+from typing import Any, Literal, Optional, TypeVar
 
 import numpy as np
+import optuna
 import pyro
 import pyro.infer
 import pyro.optim
 import torch
+from icecream import ic
 from its_jointprobability.utils import (
     Data_Loader,
+    Quality_Result,
     batch_to_list,
     quality_measures,
     sequential_data_loader,
+    texts_to_bow_tensor,
 )
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
-from icecream import ic
-import optuna
 
 
 class Simple_Model:
@@ -39,6 +40,9 @@ class Simple_Model:
     svi_self_pre_hooks: list[Callable[[Simple_Model], Any]]
     svi_self_step_hooks: list[Callable[[Simple_Model, int, float], Any]]
     svi_self_post_hooks: list[Callable[[Simple_Model], Any]]
+
+    # store the device on which this model shall run
+    device: Optional[torch.device] = None
 
     @abstractmethod
     def model(self, *args, **kwargs):
@@ -120,10 +124,10 @@ class Simple_Model:
             loss = float(np.mean(batch_losses))
             self.losses.append(loss)
 
-            for hook in self.svi_step_hooks:
-                hook(epoch, loss)
-            for self_hook in self.svi_self_step_hooks:
-                self_hook(self, epoch, loss)
+            for step_hook in self.svi_step_hooks:
+                step_hook(epoch, loss)
+            for self_step_hook in self.svi_self_step_hooks:
+                self_step_hook(self, epoch, loss)
 
             # compute the metrics to determine whether to stop early
             last_losses = torch.tensor(self.losses[-metric_len:])
@@ -198,36 +202,54 @@ class Simple_Model:
 
         return self.clean_up_posterior_samples(posterior_samples)
 
-    def calculate_metric(
+    def draw_posterior_samples_from_texts(
+        self,
+        *texts: str,
+        token_dict: dict[int, str],
+        num_samples: int = 1000,
+        return_sites: Optional[Collection[str]] = None,
+    ):
+        return_sites = return_sites or self.return_sites
+        bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
+        return self.draw_posterior_samples(
+            data_loader=sequential_data_loader(
+                bow_tensor, device=self.device, dtype=torch.float
+            ),
+            num_samples=num_samples,
+            return_sites=return_sites,
+        )
+
+    def calculate_metrics(
         self,
         *data: torch.Tensor,
         targets: torch.Tensor,
         target_site: str,
         batch_size: Optional[int] = None,
-        metric: Literal["accuracy", "f1_score", "recall", "precision"] = "accuracy",
         num_samples: int = 1,
         mean_dim: Optional[int] = None,
         cutoff: Optional[float] = None,
-        device: Optional[torch.device] = None,
-    ) -> float:
-        return getattr(
-            quality_measures(
-                self.draw_posterior_samples(
-                    data_loader=sequential_data_loader(
-                        *data,
-                        batch_size=batch_size,
-                        device=device,
-                        dtype=torch.float,
-                    ),
-                    num_samples=num_samples,
-                    return_sites=[target_site],
-                    progress_bar=False,
-                )[target_site],
-                targets=targets.to(device).float(),
-                cutoff=cutoff,
-                mean_dim=mean_dim,
+        post_sample_fun: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    ) -> Quality_Result:
+        samples = self.draw_posterior_samples(
+            data_loader=sequential_data_loader(
+                *data,
+                batch_size=batch_size,
+                device=self.device,
+                dtype=torch.float,
             ),
-            metric,
+            num_samples=num_samples,
+            return_sites=[target_site],
+            progress_bar=False,
+        )[target_site]
+
+        if post_sample_fun is not None:
+            samples = post_sample_fun(samples)
+
+        return quality_measures(
+            samples,
+            targets=targets.to(self.device).float(),
+            cutoff=cutoff,
+            mean_dim=mean_dim,
         )
 
 
@@ -307,11 +329,14 @@ def set_up_optuna_study(
     vectorize_particles: bool = True,
     seed: Optional[int] = 42,
     device: Optional[torch.device] = None,
+    hooks: Optional[dict[str, Collection[Callable]]] = None,
 ) -> Callable[[optuna.trial.Trial], float]:
     if var_model_kwargs is None:
         var_model_kwargs = dict()
     if fix_model_kwargs is None:
         fix_model_kwargs = dict()
+    if hooks is None:
+        hooks = dict()
 
     if initial_lr is None:
         initial_lr = lambda trial: trial.suggest_float(
@@ -343,7 +368,12 @@ def set_up_optuna_study(
         # initializations accidentally
         pyro.set_rng_seed(seed)
 
-        model = factory(**(fix_model_kwargs | trial_kwargs)).to(device)
+        model = factory(device=device, **(fix_model_kwargs | trial_kwargs))
+
+        for hook_type, hook_funs in hooks.items():
+            for hook_fun in hook_funs:
+                getattr(model, hook_type).append(hook_fun)
+
         if eval_fun_prune is not None:
             model.svi_self_step_hooks.append(
                 partial(
