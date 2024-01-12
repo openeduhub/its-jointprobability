@@ -15,10 +15,6 @@ import numpy as np
 T = TypeVar("T")
 
 
-# use CUDA if it is available; otherwise, use the CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 def balanced_subset_mask(
     target: torch.Tensor, target_size_per_category: Optional[int]
 ) -> list[bool]:
@@ -65,7 +61,9 @@ def balanced_subset_mask(
     return kept_tensor.tolist()
 
 
-def texts_to_bow_tensor(*texts, token_dict) -> torch.Tensor:
+def texts_to_bow_tensor(
+    *texts, token_dict, device: Optional[torch.device] = None
+) -> torch.Tensor:
     """Helper function to turn texts into the format used in the model."""
     keys = list(token_dict.keys())
     tokens = list(token_dict.values())
@@ -90,7 +88,9 @@ def texts_to_bow_tensor(*texts, token_dict) -> torch.Tensor:
 
 
 def labels_to_tensor(
-    *labels_col: Iterable[T], label_values: Sequence[T]
+    *labels_col: Iterable[T],
+    label_values: Sequence[T],
+    device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     """Transform the given labels to a Boolean tensor."""
     labels_indexes = [
@@ -276,7 +276,7 @@ def quality_measures(
         # the cutoffs to try
         # this follows a logistic interpolation between the min and max
         cutoffs = samples.min() + (samples.max() - samples.min()) / (
-            1 + torch.exp(-torch.arange(-100, 100, device=device) / 10)
+            1 + torch.exp(-torch.arange(-100, 100, device=samples.device) / 10)
         )
 
         # the quality measures for each cutoff

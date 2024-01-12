@@ -1,10 +1,10 @@
 import argparse
-from collections.abc import Collection
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Optional
 
-import nlprep.spacy.props as nlp
-import numpy as np
+from nlprep import partial
+
+import its_jointprobability.data.disciplines as disciplines
 import optuna
 import pyro
 import pyro.distributions as dist
@@ -15,14 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from icecream import ic
 from its_jointprobability.models.model import Model, set_up_optuna_study
-from its_jointprobability.utils import (
-    Data_Loader,
-    balanced_subset_mask,
-    default_data_loader,
-    device,
-    sequential_data_loader,
-    texts_to_bow_tensor,
-)
+from its_jointprobability.utils import Data_Loader, default_data_loader
 from pyro.nn.module import to_pyro_module_
 
 
@@ -46,11 +39,13 @@ class ProdSLDA(Model):
         target_scale: float = 1.0,
         use_batch_normalization: bool = True,
         observe_negative_targets=torch.tensor(True),
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
         self.vocab_size = voc_size
         self.target_size = target_size
         self.num_topics = num_topics
+
         self.decoder = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(num_topics, voc_size),
@@ -59,6 +54,7 @@ class ProdSLDA(Model):
             self.decoder.append(nn.BatchNorm1d(voc_size, affine=False))
         self.decoder.append(nn.Softmax(-1))
         to_pyro_module_(self.decoder)
+
         self.encoder = nn.Sequential(
             nn.Linear(voc_size, layers),
             nn.ReLU(),
@@ -70,10 +66,14 @@ class ProdSLDA(Model):
         if use_batch_normalization:
             self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
         to_pyro_module_(self.encoder)
+
         self.nu_loc = nu_loc
         self.nu_scale = nu_scale
         self.target_scale = target_scale
         self.observe_negative_targets = observe_negative_targets
+
+        self.device = device
+        self.to(device)
 
     def model(self, docs: torch.Tensor, targets: Optional[torch.Tensor] = None):
         targets_plate = pyro.plate("targets", self.target_size, dim=-2)
@@ -196,56 +196,31 @@ class ProdSLDA(Model):
         weights = self.decoder.beta.weight.T
         return F.softmax(weights, dim=-1).detach()
 
-    def draw_posterior_samples_from_texts(
-        self,
-        *texts: str,
-        token_dict: dict[int, str],
-        num_samples: int = 1000,
-        return_sites: Optional[Collection[str]] = None,
-    ):
-        return_sites = return_sites or self.return_sites
-        bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
-        return self.draw_posterior_samples(
-            data_loader=sequential_data_loader(
-                bow_tensor, device=device, dtype=torch.float
-            ),
-            num_samples=num_samples,
-            return_sites=return_sites,
-        )
 
+def import_model(
+    path: Path, device: Optional[torch.device] = None
+) -> tuple[ProdSLDA, disciplines.Meta_Data]:
+    model: ProdSLDA = torch.load(path / "prodslda", map_location=device)
+    # ensure that the model is correctly running on the given device
+    model.device = device
 
-class Data(NamedTuple):
-    docs: torch.Tensor
-    targets: torch.Tensor
-
-
-def get_train_data(path: Path, n: Optional[int] = None) -> Data:
-    train_targets: torch.Tensor = torch.load(
-        path / "train_targets",
-        map_location=torch.device("cpu"),
-    )
-    kept = balanced_subset_mask(train_targets, n)
-
-    train_data: torch.Tensor = torch.load(
-        path / "train_data_labeled",
-        map_location=torch.device("cpu"),
-    )[kept]
-
-    return Data(docs=train_data, targets=train_targets[kept])
+    metadata = disciplines.get_metadata(path)
+    return model, metadata
 
 
 def train_model(
     data_loader: Data_Loader,
     voc_size: int,
     target_size: int,
-    num_topics: int = 200,
-    layers: int = 100,
+    num_topics: int = 100,  # best: 50
+    layers: int = 100,  # best: 440
     dropout: float = 0.2,
-    nu_loc: float = 0.0,
-    nu_scale: float = 10.0,
+    nu_loc: float = -4.8,  # best: -6.0
+    nu_scale: float = 8.6,  # best: 18.2
     min_epochs: int = 100,
     max_epochs: int = 250,
-    initial_lr: float = 0.1,
+    target_scale: float = 1.5,
+    initial_lr: float = 0.1,  # best: 0.082
     gamma: float = 1.0,
     device: Optional[torch.device] = None,
     seed: int = 0,
@@ -260,18 +235,21 @@ def train_model(
         dropout=dropout,
         nu_loc=nu_loc,
         nu_scale=nu_scale,
+        target_scale=target_scale,
         observe_negative_targets=torch.tensor(True, device=device),
-    ).to(device)
+        device=device,
+    )
 
     prodslda.run_svi(
         data_loader=data_loader,
-        elbo=pyro.infer.Trace_ELBO(num_particles=3, vectorize_particles=False),
+        elbo=pyro.infer.TraceGraph_ELBO(
+            num_particles=3,
+            vectorize_particles=False,
+        ),
         min_epochs=min_epochs,
         max_epochs=max_epochs,
         initial_lr=initial_lr,
         gamma=gamma,
-        metric_len=10,
-        min_rel_std=5 / 1000,
     )
 
     ic(prodslda.training)
@@ -279,8 +257,14 @@ def train_model(
     return prodslda.eval()
 
 
-def run_optuna_study(path: Path, n: int = 100, n_trials=25, seed: int = 0):
-    train_data = get_train_data(path, n=n)
+def run_optuna_study(
+    path: Path,
+    n: int = 100,
+    n_trials=25,
+    seed: int = 0,
+    device: Optional[torch.device] = None,
+):
+    train_data = disciplines.get_train_data(path, n=n, always_include_confirmed=False)
 
     train_docs: torch.Tensor = train_data.docs
     train_targets: torch.Tensor = train_data.targets
@@ -289,16 +273,12 @@ def run_optuna_study(path: Path, n: int = 100, n_trials=25, seed: int = 0):
     ic(train_targets.shape)
     ic(train_targets.sum(-2))
 
-    test_docs: torch.Tensor = torch.load(
-        path / "test_data_labeled", map_location=torch.device("cpu")
-    )
-    test_targets: torch.Tensor = torch.load(
-        path / "test_targets", map_location=torch.device("cpu")
-    )
+    test_data = disciplines.get_test_data(path)
+    test_docs = test_data.docs
+    test_targets = test_data.targets
 
     ic(test_docs.shape)
     ic(test_targets.shape)
-    ic(test_targets.sum(-2))
 
     objective = set_up_optuna_study(
         factory=ProdSLDA,
@@ -309,57 +289,76 @@ def run_optuna_study(path: Path, n: int = 100, n_trials=25, seed: int = 0):
             dtype=torch.float,
         ),
         elbo_choices={
-            "Trace": pyro.infer.Trace_ELBO,
             "TraceGraph": pyro.infer.TraceGraph_ELBO,
         },
-        eval_fun_final=lambda obj: obj.calculate_metric(
+        eval_fun_final=lambda obj: obj.calculate_metrics(
             test_docs,
             targets=test_targets,
             target_site="a",
-            metric="f1_score",
-            num_samples=100,
-            cutoff=None,
-            device=device,
+            num_samples=1000,
             mean_dim=0,
-        ),
-        eval_fun_prune=lambda obj, step, loss: (
-            obj.calculate_metric(
-                test_docs,
-                targets=test_targets,
-                target_site="a",
-                metric="f1_score",
-                num_samples=10,
-                cutoff=None,
-                device=device,
-            )
-        ),
+            cutoff=None,
+            post_sample_fun=F.sigmoid,
+        ).f1_score,  # type: ignore
+        eval_fun_prune=lambda obj, step, loss: obj.calculate_metrics(
+            test_docs,
+            targets=test_targets,
+            target_site="a",
+            num_samples=10,
+            mean_dim=0,
+            cutoff=None,
+            post_sample_fun=F.sigmoid,
+        ).f1_score,  # type: ignore
         eval_freq=5,
         fix_model_kwargs={
             "voc_size": train_docs.shape[-1],
             "target_size": train_targets.shape[-1],
-            "nu_loc": 0,
-            "nu_scale": 10.0,
-            # "num_topics": 200,
-            # "layers": 100,
-            # "dropout": 0.2,
+            "use_batch_normalization": True,
+            "dropout": 0.2,
         },
         var_model_kwargs={
-            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500, 25),
+            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500, 10),
             "layers": lambda trial: trial.suggest_int("layers", 50, 500, 10),
-            "dropout": lambda trial: trial.suggest_float("dropout", 0.0, 0.5, step=0.1),
+            "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10, 0),
+            "nu_scale": lambda trial: trial.suggest_float("nu_scale", 1, 20),
             "target_scale": lambda trial: trial.suggest_float(
-                "target_scale", 0.1, 10, log=True
-            ),
-            "use_batch_normalization": lambda trial: trial.suggest_categorical(
-                "batch_normalization", [True, False]
+                "target_scale", 1e-2, 10, log=True
             ),
         },
         vectorize_particles=False,
+        num_particles=lambda trial: 1,
         gamma=lambda trial: 1.0,
-        initial_lr=lambda trial: 0.1,
         min_epochs=5,
         max_epochs=lambda trial: 480,
         device=device,
+        hooks={
+            "svi_self_post_hooks": [
+                lambda obj: print(
+                    "train metrics",
+                    obj.calculate_metrics(
+                        train_docs,
+                        targets=train_targets,
+                        target_site="target",
+                        num_samples=100,
+                        mean_dim=0,
+                        cutoff=None,
+                        post_sample_fun=F.sigmoid,
+                    ),
+                ),
+                lambda obj: print(
+                    "test metrics",
+                    obj.calculate_metrics(
+                        test_docs,
+                        targets=test_targets,
+                        target_site="target",
+                        num_samples=100,
+                        mean_dim=0,
+                        cutoff=None,
+                        post_sample_fun=F.sigmoid,
+                    ),
+                ),
+            ]
+        },
     )
 
     study = optuna.create_study(
@@ -397,11 +396,6 @@ def run_optuna_study_cli():
         default=None,
     )
     parser.add_argument(
-        "-m",
-        type=int,
-        default=None,
-    )
-    parser.add_argument(
         "--num-trials",
         type=int,
         default=25,
@@ -410,4 +404,6 @@ def run_optuna_study_cli():
     args = parser.parse_args()
 
     path = Path(args.path)
-    run_optuna_study(path, args.n, args.m, args.num_trials)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    run_optuna_study(path=path, n=args.n, n_trials=args.num_trials, device=device)
