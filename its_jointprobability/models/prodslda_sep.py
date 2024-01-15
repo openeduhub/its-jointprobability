@@ -455,8 +455,10 @@ def retrain_model_cli():
 
     try:
         prodslda, _ = prodslda_module.import_model(path, device=device)
+        prodslda_loaded = True
     except FileNotFoundError:
         prodslda = None
+        prodslda_loaded = False
 
     model = train_model(
         data_loader,
@@ -468,7 +470,8 @@ def retrain_model_cli():
         max_epochs=args.max_epochs,
     )
 
-    torch.save(model.prodslda, path / "prodslda")
+    if not prodslda_loaded:
+        prodslda_module.save_model(model.prodslda, path)
     torch.save(model, path / "classification")
 
     # load the list of discipline titles for more readable outputs
@@ -495,7 +498,6 @@ def eval_model(
     targets: torch.Tensor,
     target_values: Iterable,
 ) -> Quality_Result:
-    ic(model.device)
     samples = F.sigmoid(
         model.draw_posterior_samples(
             data_loader=sequential_data_loader(
