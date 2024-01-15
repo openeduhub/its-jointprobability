@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pyro.ops.stats
 import torch
+import torch.nn.functional as F
 import uvicorn
 from fastapi import FastAPI
+from icecream import ic
 from pydantic import BaseModel, Field
 
 import its_jointprobability.models.prodslda as model_module
@@ -103,7 +105,7 @@ def main():
             except RuntimeError:
                 return Prediction_Result(disciplines=[])
 
-            probs = 1 / (1 + torch.exp(-posterior_samples))
+            probs = F.sigmoid(posterior_samples)
             mean_probs = probs.mean(0)
             median_probs = probs.median(0)[0]
             intervals: list[list[float]] = (
