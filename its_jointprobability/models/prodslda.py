@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from icecream import ic
 from its_jointprobability.models.model import Model, set_up_optuna_study
-from its_jointprobability.utils import Data_Loader, default_data_loader
+from its_jointprobability.utils import Data_Loader, default_data_loader, sequential_data_loader
 from pyro.nn.module import to_pyro_module_
 
 
@@ -29,11 +29,12 @@ class ProdSLDA(Model):
 
     def __init__(
         self,
-        voc_size: int,
+        vocab_size: int,
         target_size: int,
         num_topics: int,
-        layers: int,
-        dropout: float,
+        hid_size: int = 100,
+        hid_num: int = 1,
+        dropout: float = 0.2,
         nu_loc: float = 0.0,
         nu_scale: float = 10.0,
         target_scale: float = 1.0,
@@ -42,37 +43,55 @@ class ProdSLDA(Model):
         device: Optional[torch.device] = None,
     ):
         super().__init__()
-        self.vocab_size = voc_size
+        self.vocab_size = vocab_size
         self.target_size = target_size
         self.num_topics = num_topics
-
-        self.decoder = nn.Sequential(
-            nn.Dropout(dropout),
-            nn.Linear(num_topics, voc_size),
-        )
-        if use_batch_normalization:
-            self.decoder.append(nn.BatchNorm1d(voc_size, affine=False))
-        self.decoder.append(nn.Softmax(-1))
-        to_pyro_module_(self.decoder)
-
-        self.encoder = nn.Sequential(
-            nn.Linear(voc_size, layers),
-            nn.ReLU(),
-            nn.Linear(layers, layers),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(layers, num_topics * 2),
-        )
-        if use_batch_normalization:
-            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
-        to_pyro_module_(self.encoder)
-
+        self.hid_size = hid_size
+        self.hid_num = hid_num
+        self.dropout = dropout
         self.nu_loc = nu_loc
         self.nu_scale = nu_scale
         self.target_scale = target_scale
+        self.use_batch_normalization = use_batch_normalization
         self.observe_negative_targets = observe_negative_targets
-
         self.device = device
+
+        self.args = {
+            "vocab_size": self.vocab_size,
+            "target_size": self.target_size,
+            "num_topics": self.num_topics,
+            "hid_size": self.hid_size,
+            "hid_num": self.hid_num,
+            "dropout": self.dropout,
+            "nu_loc": self.nu_loc,
+            "nu_scale": self.nu_scale,
+            "target_scale": self.target_scale,
+            "use_batch_normalization": self.use_batch_normalization,
+            "observe_negative_targets": self.observe_negative_targets,
+        }
+
+        self.decoder = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(num_topics, vocab_size),
+        )
+        if use_batch_normalization:
+            self.decoder.append(nn.BatchNorm1d(vocab_size, affine=False))
+        self.decoder.append(nn.Softmax(-1))
+
+        self.encoder = nn.Sequential(
+            nn.Linear(vocab_size, hid_size),
+        )
+
+        for _ in range(hid_num - 1):
+            self.encoder.append(nn.LeakyReLU())
+            self.encoder.append(nn.Linear(hid_size, hid_size))
+
+        self.encoder.append(nn.LeakyReLU())
+        self.encoder.append(nn.Dropout(dropout))
+        self.encoder.append(nn.Linear(hid_size, num_topics * 2))
+        if use_batch_normalization:
+            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
+
         self.to(device)
 
     def model(self, docs: torch.Tensor, targets: Optional[torch.Tensor] = None):
@@ -99,6 +118,8 @@ class ProdSLDA(Model):
                 logtheta = logtheta.squeeze(0)
             theta = F.softmax(logtheta, -1)
 
+            
+        pyro.module("decoder", self.decoder, update_module_params=True)
         count_param = self.decoder(theta)
 
         with docs_plate:
@@ -115,12 +136,7 @@ class ProdSLDA(Model):
             )
 
             with targets_plate:
-                a = pyro.sample(
-                    "a",
-                    dist.Normal(
-                        torch.matmul(nu, theta.swapaxes(-1, -2)).squeeze(-2), 10
-                    ),
-                )
+                a = pyro.sample("a", dist.Normal((nu.squeeze(-2) @ theta.T), 10))
                 with pyro.poutine.scale(scale=self.target_scale):
                     target = pyro.sample(
                         "target",
@@ -130,8 +146,9 @@ class ProdSLDA(Model):
                     )
 
     def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        pyro.module("encoder", self.encoder, update_module_params=True)
         logtheta_loc, logtheta_logvar = self.encoder(doc).split(self.num_topics, -1)
-        logtheta_scale = F.softplus(logtheta_logvar) + 1e-5
+        logtheta_scale = F.softplus(logtheta_logvar) + 1e-7
 
         return logtheta_loc, logtheta_scale
 
@@ -174,8 +191,7 @@ class ProdSLDA(Model):
                 a_q = pyro.sample(
                     "a",
                     dist.Normal(
-                        torch.matmul(nu_q, theta_q.swapaxes(-1, -2)).squeeze(-2),
-                        torch.matmul(a_q_scale, theta_q.swapaxes(-1, -2)).squeeze(-2),
+                        (nu_q.squeeze(-2) @ theta_q.T), (a_q_scale @ theta_q.T)
                     ),
                 )
 
@@ -196,42 +212,62 @@ class ProdSLDA(Model):
         weights = self.decoder.beta.weight.T
         return F.softmax(weights, dim=-1).detach()
 
+def save_model(model: ProdSLDA, path: Path):
+    torch.save(model.args, path / "prodslda_args")
+    torch.save(model.state_dict(), path / "prodslda_state")
+    pyro.get_param_store().save(path / "prodslda_pyro")
 
 def import_model(
     path: Path, device: Optional[torch.device] = None
 ) -> tuple[ProdSLDA, disciplines.Meta_Data]:
-    model: ProdSLDA = torch.load(path / "prodslda", map_location=device)
-    # ensure that the model is correctly running on the given device
-    model.device = device
+    pyro.get_param_store().load(path / "prodslda_pyro", map_location=device)
+    
+    kwargs = torch.load(path / "prodslda_args", map_location=device)
+    state_dict = torch.load(path / "prodslda_state", map_location=device)
+    model = ProdSLDA(device=device, **kwargs)
+
+    model.load_state_dict(state_dict)
+
+    # ensure that the imported model is in evaluation mode
+    model.eval()
 
     metadata = disciplines.get_metadata(path)
     return model, metadata
 
+def test_model_file(path: Path, device: Optional[torch.device] = None):
+    model, metadata = import_model(path, device)
+    data = disciplines.get_test_data(path)
+
+    samples = model.draw_posterior_samples(sequential_data_loader(data.docs, device=device, dtype=torch.float))
+
+    print(model.calculate_metrics(data.docs, targets=data.targets, target_site="target", num_samples=100, mean_dim=0))
 
 def train_model(
     data_loader: Data_Loader,
     voc_size: int,
     target_size: int,
-    num_topics: int = 100,  # best: 50
-    layers: int = 100,  # best: 440
+    num_topics: int = 25,
+    hid_size: int = 900,
+    hid_num: int = 1,
     dropout: float = 0.2,
-    nu_loc: float = -4.8,  # best: -6.0
-    nu_scale: float = 8.6,  # best: 18.2
+    nu_loc: float = -1.7,
+    nu_scale: float = 15,
     min_epochs: int = 100,
-    max_epochs: int = 250,
-    target_scale: float = 1.5,
-    initial_lr: float = 0.1,  # best: 0.082
-    gamma: float = 1.0,
+    max_epochs: int = 500,
+    target_scale: float = 1.0,
+    initial_lr: float = 0.1,
+    gamma: float = 0.75,
     device: Optional[torch.device] = None,
     seed: int = 0,
 ) -> ProdSLDA:
     pyro.set_rng_seed(seed)
 
     prodslda = ProdSLDA(
-        voc_size=voc_size,
+        vocab_size=voc_size,
         target_size=target_size,
         num_topics=num_topics,
-        layers=layers,
+        hid_size=hid_size,
+        hid_num=hid_num,
         dropout=dropout,
         nu_loc=nu_loc,
         nu_scale=nu_scale,
@@ -252,8 +288,6 @@ def train_model(
         gamma=gamma,
     )
 
-    ic(prodslda.training)
-
     return prodslda.eval()
 
 
@@ -264,7 +298,7 @@ def run_optuna_study(
     seed: int = 0,
     device: Optional[torch.device] = None,
 ):
-    train_data = disciplines.get_train_data(path, n=n, always_include_confirmed=False)
+    train_data = disciplines.get_train_data(path, n=n, always_include_confirmed=True)
 
     train_docs: torch.Tensor = train_data.docs
     train_targets: torch.Tensor = train_data.targets
@@ -291,34 +325,35 @@ def run_optuna_study(
         elbo_choices={
             "TraceGraph": pyro.infer.TraceGraph_ELBO,
         },
-        eval_fun_final=lambda obj: obj.calculate_metrics(
+        eval_funs_final=[
+            lambda obj: obj.calculate_metrics(
+                test_docs,
+                targets=test_targets,
+                target_site="target",
+                num_samples=100,
+                mean_dim=0,
+                cutoff=0.2,
+            ).accuracy,  # type: ignore
+        ],
+        eval_fun_prune=lambda obj, epoch, loss: obj.calculate_metrics(
             test_docs,
             targets=test_targets,
-            target_site="a",
-            num_samples=1000,
-            mean_dim=0,
-            cutoff=None,
-            post_sample_fun=F.sigmoid,
-        ).f1_score,  # type: ignore
-        eval_fun_prune=lambda obj, step, loss: obj.calculate_metrics(
-            test_docs,
-            targets=test_targets,
-            target_site="a",
-            num_samples=10,
-            mean_dim=0,
-            cutoff=None,
-            post_sample_fun=F.sigmoid,
-        ).f1_score,  # type: ignore
-        eval_freq=5,
+            target_site="target",
+            num_samples=1,
+            cutoff=1.0,
+        ).accuracy,  # type: ignore
         fix_model_kwargs={
-            "voc_size": train_docs.shape[-1],
+            "vocab_size": train_docs.shape[-1],
             "target_size": train_targets.shape[-1],
             "use_batch_normalization": True,
             "dropout": 0.2,
         },
         var_model_kwargs={
-            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500, 10),
-            "layers": lambda trial: trial.suggest_int("layers", 50, 500, 10),
+            "num_topics": lambda trial: trial.suggest_int(
+                "num_topics", 10, 1000, log=True
+            ),
+            "hid_size": lambda trial: trial.suggest_int("hid_size", 10, 1000, log=True),
+            "hid_num": lambda trial: trial.suggest_int("hid_num", 1, 3),
             "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10, 0),
             "nu_scale": lambda trial: trial.suggest_float("nu_scale", 1, 20),
             "target_scale": lambda trial: trial.suggest_float(
@@ -338,8 +373,8 @@ def run_optuna_study(
                     obj.calculate_metrics(
                         train_docs,
                         targets=train_targets,
-                        target_site="target",
-                        num_samples=100,
+                        target_site="a",
+                        num_samples=25,
                         mean_dim=0,
                         cutoff=None,
                         post_sample_fun=F.sigmoid,
@@ -350,8 +385,8 @@ def run_optuna_study(
                     obj.calculate_metrics(
                         test_docs,
                         targets=test_targets,
-                        target_site="target",
-                        num_samples=100,
+                        target_site="a",
+                        num_samples=25,
                         mean_dim=0,
                         cutoff=None,
                         post_sample_fun=F.sigmoid,
@@ -363,7 +398,7 @@ def run_optuna_study(
 
     study = optuna.create_study(
         study_name="ProdSLDA",
-        direction="maximize",
+        directions=["maximize"],
         pruner=optuna.pruners.HyperbandPruner(),
         sampler=optuna.samplers.TPESampler(seed=seed),
         storage="sqlite:///prodslda.db",
@@ -375,8 +410,6 @@ def run_optuna_study(
 
     study.optimize(objective, n_trials=n_trials)
 
-    print(f"{study.best_value=}")
-    print(f"{study.best_params=}")
     print(f"{study.best_trial=}")
 
     fig = optuna.visualization.plot_param_importances(study)
