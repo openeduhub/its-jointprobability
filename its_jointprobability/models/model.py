@@ -92,12 +92,16 @@ class Simple_Model:
         if not hasattr(self, "losses") or not keep_prev_losses:
             self.losses = list()
 
+        # get the number of mini-batches and total number of data points,
+        # so that we can correctly scale the ELBO of each mini-batch
+        # and correct the learning rate decay
         one_epoch = batch_to_list(data_loader)
         batches_per_epoch = len(one_epoch)
         n = sum(len(batch[0]) for batch in one_epoch)
 
+        # set the per-step learning rate decay such that after 100 epochs,
+        # we have multiplied the learning rate with gamma
         lrd = gamma ** (1 / (100 * batches_per_epoch))
-        ic(lrd)
         optim = pyro.optim.ClippedAdam(
             {
                 # initial learning rate
@@ -210,7 +214,9 @@ class Simple_Model:
         return_sites: Optional[Collection[str]] = None,
     ):
         return_sites = return_sites or self.return_sites
-        bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
+        bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict).int()
+        ic(bow_tensor)
+        ic(torch.arange(len(list(token_dict.keys()))).repeat_interleave(bow_tensor[0]))
         return self.draw_posterior_samples(
             data_loader=sequential_data_loader(
                 bow_tensor, device=self.device, dtype=torch.float
@@ -316,7 +322,7 @@ def set_up_optuna_study(
     factory: Callable[..., T],
     data_loader: Data_Loader,
     elbo_choices: dict[str, type[pyro.infer.ELBO]],
-    eval_fun_final: Callable[[T], float],
+    eval_funs_final: Collection[Callable[[T], float]],
     eval_fun_prune: Optional[Callable[[T, int, float], float]] = None,
     eval_freq: int = 10,
     var_model_kwargs: Optional[dict[str, Callable[[optuna.trial.Trial], Any]]] = None,
@@ -330,7 +336,7 @@ def set_up_optuna_study(
     seed: Optional[int] = 42,
     device: Optional[torch.device] = None,
     hooks: Optional[dict[str, Collection[Callable]]] = None,
-) -> Callable[[optuna.trial.Trial], float]:
+) -> Callable[[optuna.trial.Trial], list[float]]:
     if var_model_kwargs is None:
         var_model_kwargs = dict()
     if fix_model_kwargs is None:
@@ -351,7 +357,7 @@ def set_up_optuna_study(
             "max_epoches", min_epochs, min_epochs + 50 * 6, 50
         )
 
-    def objective(trial: optuna.trial.Trial) -> float:
+    def objective(trial: optuna.trial.Trial) -> list[float]:
         trial_kwargs = {key: fun(trial) for key, fun in var_model_kwargs.items()}
         initial_lr_trial = initial_lr(trial)
         gamma_trial = gamma(trial)
@@ -400,6 +406,6 @@ def set_up_optuna_study(
             min_z_score=1.68,
         )
 
-        return eval_fun_final(model)
+        return [fun(model) for fun in eval_funs_final]
 
     return objective
