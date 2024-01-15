@@ -18,21 +18,26 @@ def get_train_data(
         path / "train_targets",
         map_location=torch.device("cpu"),
     )
+    train_docs: torch.Tensor = torch.load(
+        path / "train_data_labeled",
+        map_location=torch.device("cpu"),
+    )
+
     kept = torch.Tensor(balanced_subset_mask(train_targets, n)).bool()
 
     if always_include_confirmed:
-        redaktionsbuffet_mask = torch.load(
-            path / "redaktionsbuffet_train", map_location=torch.device("cpu")
-        )
+        redaktionsbuffet_mask = torch.Tensor(
+            torch.load(
+                path / "redaktionsbuffet_train", map_location=torch.device("cpu")
+            )
+        ).bool()
         kept = torch.logical_or(kept, redaktionsbuffet_mask)
-
-    train_data: torch.Tensor = torch.load(
-        path / "train_data_labeled",
-        map_location=torch.device("cpu"),
-    )[kept]
+        print(
+            f"{torch.logical_and(kept, ~redaktionsbuffet_mask).sum()} / {kept.sum()} training materials have not been confirmed by editors"
+        )
 
     ic(train_targets[kept].sum(-2))
-    return Data(docs=train_data, targets=train_targets[kept])
+    return Data(docs=train_docs[kept], targets=train_targets[kept])
 
 
 def get_test_data(path: Path) -> Data:
