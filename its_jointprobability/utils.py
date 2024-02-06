@@ -1,16 +1,16 @@
-from functools import reduce
 import math
 import random
 from collections.abc import Iterable, Iterator, Sequence
+from functools import reduce
 from typing import Optional, TypeVar
 
 import nlprep.spacy.props as nlp
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from nlprep import Collection, tokenize_documents
 from pydantic import BaseModel
-import numpy as np
-
 
 T = TypeVar("T")
 
@@ -62,12 +62,10 @@ def balanced_subset_mask(
 
 
 def texts_to_bow_tensor(
-    *texts, token_dict, device: Optional[torch.device] = None
+    *texts, tokens: Sequence[str], device: Optional[torch.device] = None
 ) -> torch.Tensor:
     """Helper function to turn texts into the format used in the model."""
-    keys = list(token_dict.keys())
-    tokens = list(token_dict.values())
-    tokens_set = set(token_dict.values())
+    tokens_set = set(tokens)
     # tokenize the text
     docs = list(tokenize_documents(texts, nlp.tokenize_as_lemmas))
     # select only the tokens from the dictionary
@@ -75,7 +73,7 @@ def texts_to_bow_tensor(
         [
             torch.tensor(
                 [
-                    keys[tokens.index(token.lower())]
+                    tokens.index(token.lower())
                     for token in doc
                     if token.lower() in tokens_set
                 ],
@@ -87,23 +85,23 @@ def texts_to_bow_tensor(
     return F.one_hot(docs_as_tensor, num_classes=len(tokens)).sum(-2).float()
 
 
-def labels_to_tensor(
-    *labels_col: Iterable[T],
-    label_values: Sequence[T],
-    device: Optional[torch.device] = None,
-) -> torch.Tensor:
-    """Transform the given labels to a Boolean tensor."""
-    labels_indexes = [
-        torch.tensor([label_values.index(label) for label in labels], device=device)
-        for labels in labels_col
-    ]
+# def labels_to_tensor(
+#     *labels_col: Iterable[T],
+#     label_values: Sequence[T],
+#     device: Optional[torch.device] = None,
+# ) -> torch.Tensor:
+#     """Transform the given labels to a Boolean tensor."""
+#     labels_indexes = [
+#         torch.tensor([label_values.index(label) for label in labels], device=device)
+#         for labels in labels_col
+#     ]
 
-    return torch.stack(
-        [
-            F.one_hot(labels, num_classes=len(label_values)).sum(-2).float()
-            for labels in labels_indexes
-        ]
-    )
+#     return torch.stack(
+#         [
+#             F.one_hot(labels, num_classes=len(label_values)).sum(-2).float()
+#             for labels in labels_indexes
+#         ]
+#     )
 
 
 Batch_Strategy = Iterator[tuple[bool, list[int]]]
@@ -151,11 +149,10 @@ def get_random_batch_strategy(length: int, batch_size: Optional[int]) -> Batch_S
             yield last_batch_in_epoch, results
 
 
-"""
-A data loader is an (infinite) iterator that yields a the following:
-1. An indicator whether this is the the last batch of the epoch.
-2. The batched data itself.
-"""
+#: A data loader is an (infinite) iterator that yields a the following:
+#:
+#: 1. An indicator whether this is the the last batch of the epoch.
+#: 2. The batched data itself.
 Data_Loader = Iterator[tuple[bool, Sequence[torch.Tensor]]]
 
 

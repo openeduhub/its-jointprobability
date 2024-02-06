@@ -3,14 +3,16 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Iterable, Sequence
 from functools import partial
-from typing import Any, Literal, Optional, TypeVar
+from typing import Any, Optional, TypeVar
 
 import numpy as np
 import optuna
+import pandas as pd
 import pyro
 import pyro.infer
 import pyro.optim
 import torch
+import torch.nn.functional as F
 from icecream import ic
 from its_jointprobability.utils import (
     Data_Loader,
@@ -209,14 +211,14 @@ class Simple_Model:
     def draw_posterior_samples_from_texts(
         self,
         *texts: str,
-        token_dict: dict[int, str],
+        tokens: Sequence[str],
         num_samples: int = 1000,
         return_sites: Optional[Collection[str]] = None,
     ):
         return_sites = return_sites or self.return_sites
-        bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict).int()
+        bow_tensor = texts_to_bow_tensor(*texts, tokens=tokens).int()
         ic(bow_tensor)
-        ic(torch.arange(len(list(token_dict.keys()))).repeat_interleave(bow_tensor[0]))
+        ic(torch.arange(len(tokens)).repeat_interleave(bow_tensor[0]))
         return self.draw_posterior_samples(
             data_loader=sequential_data_loader(
                 bow_tensor, device=self.device, dtype=torch.float
@@ -262,7 +264,7 @@ class Simple_Model:
 class Model(Simple_Model, PyroModule):
     """A Bayesian model that relies on a neural network."""
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
         self.svi_pre_hooks = [self.train]
         self.svi_self_pre_hooks = []
         self.svi_step_hooks = []
@@ -409,3 +411,46 @@ def set_up_optuna_study(
         return [fun(model) for fun in eval_funs_final]
 
     return objective
+
+
+def eval_model(
+    model: Simple_Model,
+    data: torch.Tensor,
+    targets: torch.Tensor,
+    target_values: Iterable,
+) -> Quality_Result:
+    samples = F.sigmoid(
+        model.draw_posterior_samples(
+            data_loader=sequential_data_loader(
+                data,
+                device=model.device,
+                dtype=torch.float,
+            ),
+            return_sites=["a"],
+            num_samples=100,
+        )["a"]
+    )
+    global_measures = quality_measures(
+        samples, targets.to(model.device).float(), mean_dim=0, cutoff=None
+    )
+    print(f"global measures: {global_measures}")
+
+    by_discipline = quality_measures(
+        samples,
+        targets.to(model.device).float(),
+        mean_dim=-3,
+        cutoff=global_measures.cutoff,
+        parallel_dim=-1,
+    )
+    df = pd.DataFrame(
+        {
+            key: getattr(by_discipline, key)
+            for key in ["accuracy", "precision", "recall", "f1_score"]
+        }
+    )
+    df["taxonid"] = target_values
+    df["count"] = targets.sum(-2).cpu()
+    df = df.set_index("taxonid")
+    print(df.sort_values("f1_score", ascending=False))
+
+    return by_discipline

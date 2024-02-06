@@ -5,19 +5,24 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-filter.url = "github:numtide/nix-filter";
-    nlprep = {
-      url = "github:openeduhub/nlprep";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     openapi-checks = {
       url = "github:openeduhub/nix-openapi-checks";
       inputs = {
         flake-utils.follows = "flake-utils";
       };
     };
+    data-utils = {
+      url = "github:openeduhub/data-utils";
+      inputs = {
+        flake-utils.follows = "flake-utils";
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
   };
 
   nixConfig = {
+    # additional caches for CUDA packages
+    # these are not included in the normal Nix cache, as they are unfree
     trusted-substituters = [
       "https://numtide.cachix.org"
       "https://cuda-maintainers.cachix.org"
@@ -43,14 +48,13 @@
             allowUnfree = true;
             cudaSupport = true;
           };
+          overlays = [
+            self.inputs.data-utils.overlays.default
+          ];
         };
-        pkgs-without-cuda = import nixpkgs {
-          inherit system;
-          config = {
-            allowUnfree = true;
-            cudaSupport = false;
-          };
-        };
+        pkgs-without-cuda = nixpkgs.legacyPackages.${system}.extend
+          self.inputs.data-utils.overlays.default;
+
         openapi-checks = self.inputs.openapi-checks.lib.${system};
         nix-filter = self.inputs.nix-filter.lib;
         get-python = pkgs: pkgs.python310;
@@ -66,7 +70,8 @@
             pyro-ppl
             icecream
             matplotlib
-            (self.inputs.nlprep.lib.${system}.nlprep py-pkgs) # nlp pre-processing
+            tqdm
+            data-utils
           ];
 
         python-packages-build = py-pkgs:
@@ -153,6 +158,24 @@
             rec {
               webservice-with-cuda = get-python-application pkgs-with-cuda;
               with-cuda = webservice-with-cuda;
+            }
+        );
+        # the binaries we can run
+        apps = {
+          retrain-model = {
+            type = "app";
+            program = "${self.outputs.packages.${system}.default}/bin/retrain-model";
+          };
+        } //
+        # CUDA is only supported on x86_64 linux
+        (
+          nixpkgs.lib.optionalAttrs
+            (system == "x86_64-linux")
+            {
+              retrain-model-with-cuda = {
+                type = "app";
+                program = "${self.outputs.packages.${system}.with-cuda}/bin/retrain-model";
+              };
             }
         );
         # the library that may be used in different python versions

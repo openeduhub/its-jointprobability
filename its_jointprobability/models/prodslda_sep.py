@@ -275,7 +275,7 @@ class Classification(Simple_Model):
     ):
         """Helper functions in order to draw posterior samples for texts."""
         return_sites = return_sites if return_sites is not None else self.return_sites
-        bow_tensor = texts_to_bow_tensor(*texts, token_dict=token_dict)
+        bow_tensor = texts_to_bow_tensor(*texts, tokens=token_dict)
         return self.draw_posterior_samples(
             data_loader=sequential_data_loader(
                 bow_tensor, device=self.device, dtype=torch.float
@@ -410,129 +410,6 @@ def train_model(
     )
 
     return model
-
-
-def retrain_model_cli():
-    """Add some CLI arguments to the retraining of the model."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "path",
-        type=str,
-        help="The path to the directory containing the training data",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="The seed to use for pseudo random number generation",
-    )
-    parser.add_argument(
-        "--max-epochs",
-        type=int,
-        default=250,
-        help="The maximum number of training epochs per batch of data",
-    )
-    parser.add_argument(
-        "-n",
-        type=int,
-        default=None,
-        help="The maximum number of training documents",
-    )
-
-    ic.enable()
-
-    args = parser.parse_args()
-    path = Path(args.path)
-
-    train_data = get_train_data(path, n=args.n)
-    train_docs = train_data.docs
-    train_targets = train_data.targets
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data_loader = default_data_loader(
-        train_docs, train_targets, device=device, dtype=torch.float
-    )
-
-    try:
-        prodslda, _ = prodslda_module.import_model(path, device=device)
-        prodslda_loaded = True
-    except FileNotFoundError:
-        prodslda = None
-        prodslda_loaded = False
-
-    model = train_model(
-        data_loader,
-        train_docs.shape[-1],
-        train_targets.shape[-1],
-        prodslda,
-        device=device,
-        seed=args.seed,
-        max_epochs=args.max_epochs,
-    )
-
-    if not prodslda_loaded:
-        prodslda_module.save_model(model.prodslda, path)
-    torch.save(model, path / "classification")
-
-    # load the list of discipline titles for more readable outputs
-    titles = disciplines.get_metadata(path).titles
-
-    # evaluate the newly trained model
-    print("evaluating model on train data")
-    eval_model(model, train_docs, train_targets, titles)
-    print("prodslda raw")
-    eval_model(model.prodslda, train_docs, train_targets, titles)
-
-    test_data = get_test_data(path)
-    test_docs = test_data.docs
-    test_targets = test_data.targets
-    print("evaluating model on test data")
-    eval_model(model, test_docs, test_targets, titles)
-    print("prodslda raw")
-    eval_model(model.prodslda, test_docs, test_targets, titles)
-
-
-def eval_model(
-    model: Simple_Model,
-    data: torch.Tensor,
-    targets: torch.Tensor,
-    target_values: Iterable,
-) -> Quality_Result:
-    samples = F.sigmoid(
-        model.draw_posterior_samples(
-            data_loader=sequential_data_loader(
-                data,
-                device=model.device,
-                dtype=torch.float,
-            ),
-            return_sites=["a"],
-            num_samples=100,
-        )["a"]
-    )
-    global_measures = quality_measures(
-        samples, targets.to(model.device).float(), mean_dim=0, cutoff=None
-    )
-    print(f"global measures: {global_measures}")
-
-    by_discipline = quality_measures(
-        samples,
-        targets.to(model.device).float(),
-        mean_dim=-3,
-        cutoff=global_measures.cutoff,
-        parallel_dim=-1,
-    )
-    df = pd.DataFrame(
-        {
-            key: getattr(by_discipline, key)
-            for key in ["accuracy", "precision", "recall", "f1_score"]
-        }
-    )
-    df["taxonid"] = target_values
-    df["count"] = targets.sum(-2).cpu()
-    df = df.set_index("taxonid")
-    print(df.sort_values("f1_score", ascending=False))
-
-    return by_discipline
 
 
 def import_model(
