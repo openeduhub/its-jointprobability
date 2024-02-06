@@ -1,10 +1,8 @@
 import argparse
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
-from nlprep import partial
-
-import its_jointprobability.data.disciplines as disciplines
+import its_jointprobability.models.prodslda as prodslda_module
 import optuna
 import pyro
 import pyro.distributions as dist
@@ -13,15 +11,22 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from data_utils.defaults import Fields
 from icecream import ic
-from its_jointprobability.models.model import Model, set_up_optuna_study
-from its_jointprobability.utils import Data_Loader, default_data_loader, sequential_data_loader
-from pyro.nn.module import to_pyro_module_
+from its_jointprobability.data import (
+    Split_Data,
+    load_data,
+    make_data,
+    save_data,
+    save_model,
+)
+from its_jointprobability.models.model import Model, eval_model, set_up_optuna_study
+from its_jointprobability.utils import Data_Loader, default_data_loader
 
 
 class ProdSLDA(Model):
     """
-    A modification of the ProdLDA model to support supervized classification.
+    A modification of the ProdLDA model to support supervised classification.
     """
 
     return_sites = ("target", "nu", "a")
@@ -118,7 +123,6 @@ class ProdSLDA(Model):
                 logtheta = logtheta.squeeze(0)
             theta = F.softmax(logtheta, -1)
 
-            
         pyro.module("decoder", self.decoder, update_module_params=True)
         count_param = self.decoder(theta)
 
@@ -212,35 +216,42 @@ class ProdSLDA(Model):
         weights = self.decoder.beta.weight.T
         return F.softmax(weights, dim=-1).detach()
 
-def save_model(model: ProdSLDA, path: Path):
-    torch.save(model.args, path / "prodslda_args")
-    torch.save(model.state_dict(), path / "prodslda_state")
-    pyro.get_param_store().save(path / "prodslda_pyro")
 
-def import_model(
-    path: Path, device: Optional[torch.device] = None
-) -> tuple[ProdSLDA, disciplines.Meta_Data]:
-    pyro.get_param_store().load(path / "prodslda_pyro", map_location=device)
-    
-    kwargs = torch.load(path / "prodslda_args", map_location=device)
-    state_dict = torch.load(path / "prodslda_state", map_location=device)
-    model = ProdSLDA(device=device, **kwargs)
+class Data(NamedTuple):
+    train_docs: torch.Tensor
+    train_targets: torch.Tensor
+    test_docs: torch.Tensor
+    test_targets: torch.Tensor
 
-    model.load_state_dict(state_dict)
 
-    # ensure that the imported model is in evaluation mode
-    model.eval()
+def set_up_data(data: Split_Data) -> Data:
+    train_data = data.train
+    test_data = data.test
 
-    metadata = disciplines.get_metadata(path)
-    return model, metadata
+    train_docs: torch.Tensor = torch.tensor(train_data.bows)
+    train_targets: torch.Tensor = torch.tensor(
+        train_data.target_data[Fields.TAXONID.value].arr
+    )
 
-def test_model_file(path: Path, device: Optional[torch.device] = None):
-    model, metadata = import_model(path, device)
-    data = disciplines.get_test_data(path)
+    ic(train_docs.shape)
+    ic(train_targets.shape)
+    ic(train_targets.sum(-2))
 
-    samples = model.draw_posterior_samples(sequential_data_loader(data.docs, device=device, dtype=torch.float))
+    test_docs: torch.Tensor = torch.tensor(test_data.bows)
+    test_targets: torch.Tensor = torch.tensor(
+        test_data.target_data[Fields.TAXONID.value].arr
+    )
 
-    print(model.calculate_metrics(data.docs, targets=data.targets, target_site="target", num_samples=100, mean_dim=0))
+    ic(test_docs.shape)
+    ic(test_targets.shape)
+
+    return Data(
+        train_docs=train_docs,
+        train_targets=train_targets,
+        test_docs=test_docs,
+        test_targets=test_targets,
+    )
+
 
 def train_model(
     data_loader: Data_Loader,
@@ -293,26 +304,12 @@ def train_model(
 
 def run_optuna_study(
     path: Path,
-    n: int = 100,
     n_trials=25,
     seed: int = 0,
     device: Optional[torch.device] = None,
 ):
-    train_data = disciplines.get_train_data(path, n=n, always_include_confirmed=True)
-
-    train_docs: torch.Tensor = train_data.docs
-    train_targets: torch.Tensor = train_data.targets
-
-    ic(train_docs.shape)
-    ic(train_targets.shape)
-    ic(train_targets.sum(-2))
-
-    test_data = disciplines.get_test_data(path)
-    test_docs = test_data.docs
-    test_targets = test_data.targets
-
-    ic(test_docs.shape)
-    ic(test_targets.shape)
+    data = load_data(path)
+    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
 
     objective = set_up_optuna_study(
         factory=ProdSLDA,
@@ -424,19 +421,89 @@ def run_optuna_study_cli():
         help="The path to the directory containing the training data",
     )
     parser.add_argument(
-        "-n",
-        type=int,
-        default=None,
-    )
-    parser.add_argument(
         "--num-trials",
         type=int,
         default=25,
     )
 
     args = parser.parse_args()
+    path = Path(args.path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    run_optuna_study(path=path, n_trials=args.num_trials, device=device)
+
+
+def retrain_model_cli():
+    """Add some CLI arguments to the retraining of the model."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "path",
+        type=str,
+        help="The path to the directory containing the training data",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="The seed to use for pseudo random number generation",
+    )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=250,
+        help="The maximum number of training epochs per batch of data",
+    )
+    parser.add_argument(
+        "-n",
+        type=int,
+        default=None,
+        help="The maximum number of training documents",
+    )
+    parser.add_argument(
+        "--skip-cache",
+        action="store_true",
+        help="Whether to skip the cached train / test data, effectively forcing a re-generation.",
+    )
+
+    ic.enable()
+
+    args = parser.parse_args()
     path = Path(args.path)
 
+    try:
+        if args.skip_cache:
+            raise FileNotFoundError()
+        data = load_data(path)
+    except FileNotFoundError:
+        print("Processed data not found. Generating it...")
+        data = make_data(path, n=args.n, always_include_confirmed=True, max_len=5000)
+        save_data(path, data)
+
+    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    run_optuna_study(path=path, n=args.n, n_trials=args.num_trials, device=device)
+    data_loader = default_data_loader(
+        train_docs, train_targets, device=device, dtype=torch.float
+    )
+
+    prodslda = train_model(
+        data_loader,
+        voc_size=train_docs.shape[-1],
+        target_size=train_targets.shape[-1],
+        device=device,
+        seed=args.seed,
+        max_epochs=args.max_epochs,
+    )
+
+    save_model(prodslda, path)
+
+    # load the list of discipline titles for more readable outputs
+    titles = data.train.target_data[Fields.TAXONID.value].labels
+
+    # evaluate the newly trained model
+    print("evaluating model on train data")
+    eval_model(prodslda, train_docs, train_targets, titles)
+
+    if len(test_docs) > 0:
+        print("evaluating model on test data")
+        eval_model(prodslda, test_docs, test_targets, titles)

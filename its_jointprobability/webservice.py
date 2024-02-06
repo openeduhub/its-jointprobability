@@ -1,5 +1,6 @@
 """The webservice that allows for interaction with the Bayesian model."""
 import argparse
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
 
@@ -7,13 +8,14 @@ import pyro.ops.stats
 import torch
 import torch.nn.functional as F
 import uvicorn
+from data_utils.defaults import Fields
 from fastapi import FastAPI
-from icecream import ic
 from pydantic import BaseModel, Field
 
-import its_jointprobability.models.prodslda as model_module
 from its_jointprobability._version import __version__
+from its_jointprobability.data import load_metadata, load_model
 from its_jointprobability.models.model import Simple_Model
+from its_jointprobability.models.prodslda import ProdSLDA
 
 
 def main():
@@ -44,22 +46,30 @@ def main():
     # import the model and auxiliary data
     data_dir = Path.cwd() / "data"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model, metadata = model_module.import_model(data_dir, device=device)
+    model = load_model(ProdSLDA, data_dir, device)
+    metadata = load_metadata(data_dir, [Fields.TAXONID.value])
 
     # collect the possible discipline values in an Enum
     Disciplines_Enum = Enum(
         "Disciplines_Enum",
-        dict((discipline, discipline) for discipline in metadata.titles),
+        dict(
+            (discipline, discipline)
+            for discipline in metadata.targets[Fields.TAXONID.value].labels
+        ),
         type=str,
     )
     Disciplines_Enum_URI = Enum(
         "Disciplines_URI_Enum",
-        dict((uri, uri) for uri in metadata.uris),
+        dict((uri, uri) for uri in metadata.targets[Fields.TAXONID.value].uris),
         type=str,
     )
 
-    disciplines = [Disciplines_Enum(disc) for disc in metadata.titles]
-    uris = [Disciplines_Enum_URI(uri) for uri in metadata.uris]
+    disciplines = [
+        Disciplines_Enum(disc) for disc in metadata.targets[Fields.TAXONID.value].labels
+    ]
+    uris = [
+        Disciplines_Enum_URI(uri) for uri in metadata.targets[Fields.TAXONID.value].uris
+    ]
 
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
@@ -90,7 +100,7 @@ def main():
     class Webservice:
         """The actual web service."""
 
-        def __init__(self, model: Simple_Model, token_dict: dict[int, str]) -> None:
+        def __init__(self, model: Simple_Model, token_dict: Sequence[str]) -> None:
             self.model = model
             self.token_dict = token_dict
 
@@ -98,7 +108,7 @@ def main():
             try:
                 posterior_samples = self.model.draw_posterior_samples_from_texts(
                     inp.text,
-                    token_dict=self.token_dict,
+                    tokens=self.token_dict,
                     num_samples=inp.num_samples,
                     return_sites=["a"],
                 )["a"].squeeze(-2)
@@ -194,7 +204,7 @@ def main():
 
             return app
 
-    webservice = Webservice(model, metadata.word_id_meanings)
+    webservice = Webservice(model, metadata.words.tolist())
     app = webservice.app
 
     print(f"running on device {model.device}")
