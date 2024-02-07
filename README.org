@@ -52,11 +52,11 @@ It is located on =http://localhost:8080/docs= by default.
 
 To retrain the model under some data, use the included ~retrain-model~ CLI tool, e.g. through
 #+begin_src shell
-nix shell github:openeduhub/its-jointprobability -c retrain-model <path/to/data-dir>
+nix run "github:openeduhub/its-jointprobability#retrain-model" -- <path/to/data-dir>
 #+end_src
 or, *highly recommended*, with CUDA:
 #+begin_src shell
-nix shell "github:openeduhub/its-jointprobability#with-cuda" -c retrain-model <path/to/data-dir>
+nix run "github:openeduhub/its-jointprobability#retrain-model-with-cuda" -- <path/to/data-dir>
 #+end_src
 
 The utility will look for =train_data= and =train_labels=, which are assumed to files that can be loaded through [[https://pytorch.org/docs/stable/generated/torch.load.html][torch.load]]. These should be (=float=-type) [[https://pytorch.org/docs/stable/tensors.html#torch.Tensor][torch.Tensor]] objects with the following content:
@@ -99,7 +99,7 @@ With the =/predict_disciplines= endpoint, we can send a text to be assigned scho
 
 In addition to the identifiers of the predicted disciplines, we also get some diagnostics that help us understand whether this is a relevant match (in principle, all disciplines are always returned). Specifically, we gain two point-estimates (mean and median) for the probability of the discipline belonging to the given text, according to the model. We also get a credibility interval (by default 80%) on said probability.
 
-In the example below, we get only one relevant school discipline, which is also the one we would be expecting for the text (Mathematics). Because the text is relatively short, the probability of this fit is still relatively low at around 50% to 60%.
+In the example below, we get only one relevant school discipline, which is also the one we would be expecting for the text (Mathematics). Because the text is relatively short, the probability of this fit is still relatively low.
 #+begin_src shell :exports both
 curl -X 'POST' \
   'http://localhost:8080/predict_disciplines' \
@@ -112,18 +112,18 @@ curl -X 'POST' \
 
 #+RESULTS:
 #+begin_src
-               mean_prob   median_prob               prob_interval
-name                                                              
-Mathematik      0.799448  9.997893e-01               [0.462171, 1]
-Physik          0.106398  1.451062e-05    [1.9434e-15, 0.00891102]
-Deutsch         0.010206  1.070765e-09  [1.71657e-23, 4.41269e-06]
-Informatik      0.006888  1.940603e-10  [1.61938e-19, 9.59061e-06]
-Englisch        0.007137  1.059791e-10  [1.77408e-19, 3.72526e-07]
-Türkisch        0.009743  6.860193e-11   [3.9481e-22, 1.75739e-07]
-Latein          0.009236  4.144079e-11  [8.26642e-24, 5.74176e-07]
-Chemie          0.000418  1.035434e-11  [3.09142e-25, 3.67509e-08]
-Geschichte      0.013904  6.290811e-12  [2.81917e-23, 6.01777e-07]
-Medienbildung   0.017171  5.005991e-12  [6.40839e-24, 5.83756e-08]
+                          mean_prob   median_prob               prob_interval
+name                                                                         
+Mathematik                 0.380347  4.679603e-02     [2.58426e-12, 0.997651]
+Allgemein                  0.025078  9.139661e-08  [4.02003e-19, 3.60229e-05]
+Geschichte                 0.013122  1.675367e-09  [1.45597e-18, 3.68128e-05]
+Deutsch als Zweitsprache   0.004084  1.591279e-09  [7.27887e-19, 2.47795e-06]
+Deutsch                    0.018983  1.113269e-09  [1.01956e-19, 1.76982e-06]
+Informatik                 0.023973  3.909545e-10  [3.13856e-19, 9.79974e-06]
+Religion                   0.002449  2.181983e-10    [4.0397e-17, 2.2892e-07]
+Wirtschaftskunde           0.005079  1.934336e-10  [2.33006e-21, 1.16182e-06]
+Chemie                     0.001075  1.793724e-10   [2.9836e-23, 8.86167e-08]
+Physik                     0.004888  8.746266e-11  [3.99191e-20, 2.19302e-07]
 #+end_src
 
 Note that these predictions are stochastic, so another run on the same text may yield slightly different predictions:
@@ -141,16 +141,16 @@ curl -X 'POST' \
 #+begin_src
                           mean_prob   median_prob               prob_interval
 name                                                                         
-Mathematik                 0.686846  9.968573e-01              [0.0236473, 1]
-Physik                     0.049169  1.260504e-06   [7.63135e-15, 0.00571426]
-Deutsch                    0.011084  2.521037e-09  [2.03091e-20, 3.02907e-06]
-Informatik                 0.038568  1.226665e-09  [4.33632e-21, 3.91388e-06]
-Englisch                   0.012986  2.870477e-10  [2.69747e-24, 8.26626e-07]
-Astronomie                 0.010568  3.391517e-11  [6.51483e-22, 6.93551e-08]
-Türkisch                   0.000446  3.336027e-11  [6.02785e-22, 1.54782e-07]
-Deutsch als Zweitsprache   0.002441  2.717240e-11  [2.27216e-27, 1.70444e-07]
-Latein                     0.000040  2.278304e-11  [2.68186e-18, 5.94301e-08]
-Spanisch                   0.012525  2.036649e-11  [1.78818e-21, 4.24471e-08]
+Mathematik                 0.413750  6.072480e-02     [3.74232e-17, 0.996319]
+Allgemein                  0.046641  4.290943e-07   [5.38503e-16, 0.00123938]
+Deutsch als Zweitsprache   0.005944  8.564911e-09  [2.03611e-19, 1.14642e-05]
+Religion                   0.001300  2.122331e-09  [5.93142e-19, 2.55613e-06]
+Wirtschaftskunde           0.016771  2.392138e-10  [1.03162e-18, 8.05093e-07]
+Chemie                     0.007501  1.393300e-10  [8.24574e-20, 3.14066e-07]
+Physik                     0.010210  1.159532e-10  [7.21657e-21, 3.77208e-07]
+Geschichte                 0.021180  1.073886e-10  [1.36578e-19, 1.19308e-06]
+Politik                    0.021253  9.180040e-11  [3.20709e-19, 8.59679e-07]
+Medienbildung              0.000001  8.611604e-11   [1.10281e-20, 5.8364e-08]
 #+end_src
 
 To reduce this variance, we can increase the number of samples being drawn for the prediction. Note that the computation time is proportional to the number of such samples. By default, 100 samples are drawn.
@@ -169,16 +169,16 @@ curl -X 'POST' \
 #+begin_src
                           mean_prob   median_prob               prob_interval
 name                                                                         
-Mathematik                 0.754993  9.995947e-01               [0.149735, 1]
-Physik                     0.091191  2.016381e-06   [5.05096e-24, 0.00776454]
-Informatik                 0.012245  9.280623e-10  [2.13771e-23, 2.71682e-06]
-Deutsch                    0.012949  6.357618e-10  [2.61476e-23, 2.58779e-06]
-Englisch                   0.005998  1.282056e-10    [9.582e-25, 2.33286e-07]
-Italienisch                0.005004  2.486902e-11  [1.09505e-25, 6.37075e-08]
-Türkisch                   0.004970  2.454953e-11  [5.80388e-28, 7.53085e-08]
-Latein                     0.004452  2.361180e-11  [1.70598e-28, 8.75516e-08]
-Deutsch als Zweitsprache   0.005830  1.617866e-11   [3.4673e-32, 7.71424e-08]
-Astronomie                 0.005397  6.791410e-12  [9.80316e-28, 2.64872e-08]
+Mathematik                 0.423784  1.268049e-01     [1.64411e-18, 0.998153]
+Allgemein                  0.046481  8.643046e-08  [1.45753e-21, 0.000206123]
+Deutsch als Zweitsprache   0.016869  8.981272e-10  [1.07321e-26, 2.46336e-06]
+Geschichte                 0.016634  8.499260e-10  [4.44265e-24, 3.15789e-06]
+Religion                   0.016112  8.199766e-10  [2.58646e-23, 2.35166e-06]
+Informatik                 0.021049  7.731125e-10  [1.20419e-25, 3.17143e-06]
+Deutsch                    0.012258  2.038014e-10  [3.43058e-28, 1.21392e-06]
+Wirtschaftskunde           0.009198  1.468612e-10  [4.69967e-25, 2.88937e-07]
+Englisch                   0.007595  7.487544e-11   [1.30783e-24, 2.4586e-07]
+Politik                    0.011307  7.206761e-11  [3.39157e-26, 2.75936e-07]
 #+end_src
 
 Second run, for comparison
@@ -197,19 +197,19 @@ curl -X 'POST' \
 #+begin_src
                           mean_prob   median_prob               prob_interval
 name                                                                         
-Mathematik                 0.734906  9.992125e-01              [0.0894214, 1]
-Physik                     0.096943  1.915260e-06   [4.15132e-19, 0.00703591]
-Informatik                 0.009247  1.309330e-09  [5.64667e-26, 1.98821e-06]
-Deutsch                    0.014773  7.333741e-10  [1.10489e-24, 1.71488e-06]
-Englisch                   0.008916  2.134399e-10  [2.09683e-24, 5.28894e-07]
-Türkisch                   0.005436  2.777595e-11  [7.83329e-26, 1.35209e-07]
-Italienisch                0.006591  2.531843e-11  [2.87492e-25, 9.23046e-08]
-Deutsch als Zweitsprache   0.005947  1.152753e-11  [3.72586e-29, 6.60459e-08]
-Geschichte                 0.014713  9.352101e-12  [7.45049e-27, 9.41332e-08]
-Latein                     0.006336  8.414824e-12  [2.27865e-26, 3.50834e-08]
+Mathematik                 0.431154  1.383242e-01     [2.08442e-19, 0.998146]
+Allgemein                  0.047248  1.254724e-07  [1.23876e-23, 0.000368148]
+Informatik                 0.020422  1.099408e-09  [3.41015e-24, 4.73848e-06]
+Deutsch als Zweitsprache   0.015726  8.126293e-10  [7.98029e-27, 3.35471e-06]
+Religion                   0.014722  6.224634e-10  [1.66284e-24, 1.43106e-06]
+Geschichte                 0.018726  5.579727e-10  [1.08679e-27, 2.68374e-06]
+Deutsch                    0.013343  2.655548e-10  [3.88874e-25, 1.07848e-06]
+Wirtschaftskunde           0.007837  1.119125e-10    [3.0083e-26, 4.4707e-07]
+Chemie                     0.005382  1.065714e-10   [4.0824e-28, 2.75373e-07]
+Politik                    0.008488  9.583057e-11   [7.2782e-27, 3.84196e-07]
 #+end_src
 
-Note that the individual probabilities of all of the disciplines do not necessarily add up to 1. This is intended, as assigning a text multiple relevant disciplines is often desired. As an example, take the following paragraph taken from [[https://de.wikipedia.org/wiki/Deutschland][the German Wikipedia page on Germany]]. This is mostly about the history of Germany, but because it also covers relatively recent developments, it may also be relevant to politics. This is indeed what is predicted by the model.
+Note that the individual probabilities of all of the disciplines do not necessarily add up to 1. This is intended, as assigning a text multiple relevant disciplines is often desired. As an example, take the following paragraph taken from [[https://de.wikipedia.org/wiki/Deutschland][the German Wikipedia page on Germany]]. This is mostly about the history of Germany, but because it also covers relatively recent developments, it may also be relevant to politics.
 #+begin_src shell :exports both
 curl -X 'POST' \
   'http://localhost:8080/predict_disciplines' \
@@ -223,18 +223,18 @@ curl -X 'POST' \
 
 #+RESULTS:
 #+begin_src
-                          mean_prob   median_prob               prob_interval
-name                                                                         
-Geschichte                 1.000000  1.000000e+00                      [1, 1]
-Politik                    0.278964  1.378762e-02      [5.26298e-15, 0.84083]
-Deutsch                    0.209880  1.539857e-03     [6.89587e-17, 0.517412]
-Medienbildung              0.078251  4.870991e-06   [8.24893e-18, 0.00630399]
-Englisch                   0.030032  8.268547e-08  [4.32991e-21, 0.000107654]
-Latein                     0.025899  3.461025e-09  [3.94445e-26, 2.35824e-05]
-Pädagogik                  0.030022  1.091193e-09  [1.64721e-28, 8.17412e-06]
-Physik                     0.016192  2.443612e-10  [8.27201e-28, 1.11231e-06]
-Französisch                0.013344  1.442791e-10  [1.86042e-30, 5.94394e-07]
-Deutsch als Zweitsprache   0.005190  1.181849e-10   [3.4114e-25, 2.85259e-07]
+                         mean_prob   median_prob               prob_interval
+name                                                                        
+Geschichte                0.999993  1.000000e+00                      [1, 1]
+Politik                   0.071303  6.839593e-06   [5.69532e-18, 0.00618306]
+Wirtschaftskunde          0.021660  2.690139e-09   [6.1692e-23, 1.13533e-05]
+Arbeitslehre              0.010736  5.018213e-10   [1.35649e-22, 1.0695e-06]
+Interkulturelle Bildung   0.009460  3.141978e-10  [4.50761e-24, 9.82849e-07]
+Berufliche Bildung        0.009675  2.964138e-11  [5.06838e-29, 1.84728e-07]
+Geografie                 0.005669  1.680038e-11  [8.61859e-25, 6.83754e-08]
+Deutsch                   0.005364  1.242213e-11   [1.6779e-27, 4.53194e-08]
+Sozialpädagogik           0.006054  8.978197e-12  [5.57258e-30, 4.06391e-08]
+Gesellschaftskunde        0.003010  8.728597e-12  [1.22261e-26, 4.24803e-08]
 #+end_src
 
 * Notes / Limitations
