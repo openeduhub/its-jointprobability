@@ -1,4 +1,5 @@
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -34,9 +35,10 @@ class ProdSLDA(Model):
 
     def __init__(
         self,
-        vocab_size: int,
-        target_size: int,
+        vocab: Sequence[str],
+        uris: Sequence[str],
         num_topics: int,
+        labels: Optional[Sequence[str]] = None,
         hid_size: int = 100,
         hid_num: int = 1,
         dropout: float = 0.2,
@@ -47,8 +49,13 @@ class ProdSLDA(Model):
         observe_negative_targets=torch.tensor(True),
         device: Optional[torch.device] = None,
     ):
+        vocab_size = len(vocab)
+        target_size = len(uris)
         super().__init__()
+        self.vocab = vocab
         self.vocab_size = vocab_size
+        self.uris = uris
+        self.labels = labels if labels is not None else ["" for _ in uris]
         self.target_size = target_size
         self.num_topics = num_topics
         self.hid_size = hid_size
@@ -62,8 +69,9 @@ class ProdSLDA(Model):
         self.device = device
 
         self.args = {
-            "vocab_size": self.vocab_size,
-            "target_size": self.target_size,
+            "vocab": self.vocab,
+            "uris": self.uris,
+            "labels": self.labels,
             "num_topics": self.num_topics,
             "hid_size": self.hid_size,
             "hid_num": self.hid_num,
@@ -255,10 +263,11 @@ def set_up_data(data: Split_Data) -> Data:
 
 def train_model(
     data_loader: Data_Loader,
-    voc_size: int,
-    target_size: int,
-    num_topics: int = 25,
-    hid_size: int = 900,
+    vocab: Sequence[str],
+    uris: Sequence[str],
+    labels: Sequence[str],
+    num_topics: int = 50,
+    hid_size: int = 500,
     hid_num: int = 1,
     dropout: float = 0.2,
     nu_loc: float = -1.7,
@@ -274,8 +283,9 @@ def train_model(
     pyro.set_rng_seed(seed)
 
     prodslda = ProdSLDA(
-        vocab_size=voc_size,
-        target_size=target_size,
+        vocab=vocab,
+        uris=uris,
+        labels=labels,
         num_topics=num_topics,
         hid_size=hid_size,
         hid_num=hid_num,
@@ -476,7 +486,7 @@ def retrain_model_cli():
         data = load_data(path)
     except FileNotFoundError:
         print("Processed data not found. Generating it...")
-        data = make_data(path, n=args.n, always_include_confirmed=True, max_len=5000)
+        data = make_data(path, n=args.n, always_include_confirmed=True)
         save_data(path, data)
 
     train_docs, train_targets, test_docs, test_targets = set_up_data(data)
@@ -488,8 +498,9 @@ def retrain_model_cli():
 
     prodslda = train_model(
         data_loader,
-        voc_size=train_docs.shape[-1],
-        target_size=train_targets.shape[-1],
+        vocab=data.train.words.tolist(),
+        uris=data.train.target_data[Fields.TAXONID.value].uris.tolist(),
+        labels=data.train.target_data[Fields.TAXONID.value].labels.tolist(),
         device=device,
         seed=args.seed,
         max_epochs=args.max_epochs,
