@@ -80,29 +80,6 @@ def load_data(path: Path) -> Split_Data:
     return torch.load(path / "data.pt")
 
 
-class Target_Metadata(NamedTuple):
-    labels: np.ndarray[Any, np.dtypes.StrDType]
-    uris: np.ndarray[Any, np.dtypes.StrDType]
-
-
-class Metadata(NamedTuple):
-    words: np.ndarray[Any, np.dtypes.StrDType]
-    targets: dict[str, Target_Metadata]
-
-
-def load_metadata(path: Path, targets: Iterable[str]) -> Metadata:
-    words = torch.load(path / "words.pt")
-    target_metadata = {
-        target: Target_Metadata(
-            labels=torch.load(path / f"{target}_labels.pt"),
-            uris=torch.load(path / f"{target}_uris.pt"),
-        )
-        for target in targets
-    }
-
-    return Metadata(words, target_metadata)
-
-
 Model_Subtype = TypeVar("Model_Subtype", bound=Model)
 
 

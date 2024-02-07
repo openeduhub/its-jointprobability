@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from its_jointprobability._version import __version__
-from its_jointprobability.data import load_metadata, load_model
+from its_jointprobability.data import load_model
 from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 
@@ -47,29 +47,21 @@ def main():
     data_dir = Path.cwd() / "data"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(ProdSLDA, data_dir, device)
-    metadata = load_metadata(data_dir, [Fields.TAXONID.value])
 
     # collect the possible discipline values in an Enum
     Disciplines_Enum = Enum(
         "Disciplines_Enum",
-        dict(
-            (discipline, discipline)
-            for discipline in metadata.targets[Fields.TAXONID.value].labels
-        ),
+        dict((discipline, discipline) for discipline in model.labels),
         type=str,
     )
     Disciplines_Enum_URI = Enum(
         "Disciplines_URI_Enum",
-        dict((uri, uri) for uri in metadata.targets[Fields.TAXONID.value].uris),
+        dict((uri, uri) for uri in model.uris),
         type=str,
     )
 
-    disciplines = [
-        Disciplines_Enum(disc) for disc in metadata.targets[Fields.TAXONID.value].labels
-    ]
-    uris = [
-        Disciplines_Enum_URI(uri) for uri in metadata.targets[Fields.TAXONID.value].uris
-    ]
+    disciplines = [Disciplines_Enum(disc) for disc in model.labels]
+    uris = [Disciplines_Enum_URI(uri) for uri in model.uris]
 
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
@@ -204,7 +196,7 @@ def main():
 
             return app
 
-    webservice = Webservice(model, metadata.words.tolist())
+    webservice = Webservice(model, model.vocab)
     app = webservice.app
 
     print(f"running on device {model.device}")
