@@ -103,7 +103,7 @@
         ### create the python package
         python-pkg-lib = pkgs: py-pkgs: py-pkgs.buildPythonPackage {
           pname = "its-jointprobability";
-          version = "0.1.1";
+          version = "0.2.0";
           /*
           only include files that are related to the application
           this will prevent unnecessary rebuilds
