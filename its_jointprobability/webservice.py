@@ -51,17 +51,17 @@ def main():
     # collect the possible discipline values in an Enum
     Disciplines_Enum = Enum(
         "Disciplines_Enum",
-        dict((discipline, discipline) for discipline in model.labels),
+        dict((discipline, discipline) for discipline in model.id_label_dict.values()),
         type=str,
     )
     Disciplines_Enum_URI = Enum(
         "Disciplines_URI_Enum",
-        dict((uri, uri) for uri in model.uris),
+        dict((uri, uri) for uri in model.id_label_dict.keys()),
         type=str,
     )
 
-    disciplines = [Disciplines_Enum(disc) for disc in model.labels]
-    uris = [Disciplines_Enum_URI(uri) for uri in model.uris]
+    disciplines = [Disciplines_Enum(disc) for disc in model.id_label_dict.values()]
+    uris = [Disciplines_Enum_URI(uri) for uri in model.id_label_dict.keys()]
 
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
