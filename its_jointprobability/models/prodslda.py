@@ -14,7 +14,6 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from data_utils.defaults import Fields
 from icecream import ic
 from its_jointprobability.data import (
     Split_Data,
@@ -36,6 +35,7 @@ class ProdSLDA(Model):
         self,
         vocab: Sequence[str],
         id_label_dicts: Collection[dict[str, str]],
+        target_names: Collection[str],
         num_topics: int,
         hid_size: int = 100,
         hid_num: int = 1,
@@ -71,6 +71,7 @@ class ProdSLDA(Model):
         self.vocab = vocab
         self.vocab_size = vocab_size
         self.id_label_dicts = id_label_dicts
+        self.target_names = target_names
         self.target_sizes = target_sizes
         self.num_topics = num_topics
         self.hid_size = hid_size
@@ -86,6 +87,7 @@ class ProdSLDA(Model):
         self.args = {
             "vocab": self.vocab,
             "id_label_dicts": self.id_label_dicts,
+            "target_names": self.target_names,
             "num_topics": self.num_topics,
             "hid_size": self.hid_size,
             "hid_num": self.hid_num,
@@ -282,9 +284,9 @@ class ProdSLDA(Model):
 
 class Data(NamedTuple):
     train_docs: torch.Tensor
-    train_targets: torch.Tensor
+    train_targets: dict[str, torch.Tensor]
     test_docs: torch.Tensor
-    test_targets: torch.Tensor
+    test_targets: dict[str, torch.Tensor]
 
 
 def set_up_data(data: Split_Data) -> Data:
@@ -292,21 +294,22 @@ def set_up_data(data: Split_Data) -> Data:
     test_data = data.test
 
     train_docs: torch.Tensor = torch.tensor(train_data.bows)
-    train_targets: torch.Tensor = torch.tensor(
-        train_data.target_data[Fields.TAXONID.value].arr
-    )
+    train_targets: dict[str, torch.Tensor] = {
+        key: torch.tensor(value.arr) for key, value in train_data.target_data.items()
+    }
 
     ic(train_docs.shape)
-    ic(train_targets.shape)
-    ic(train_targets.sum(-2))
+    ic({field: train_target.shape for field, train_target in train_targets.items()})
+    ic({field: train_target.sum(-2) for field, train_target in train_targets.items()})
 
     test_docs: torch.Tensor = torch.tensor(test_data.bows)
-    test_targets: torch.Tensor = torch.tensor(
-        test_data.target_data[Fields.TAXONID.value].arr
-    )
+    test_targets: dict[str, torch.Tensor] = {
+        key: torch.tensor(value.arr) for key, value in test_data.target_data.items()
+    }
 
     ic(test_docs.shape)
-    ic(test_targets.shape)
+    ic({field: test_target.shape for field, test_target in test_targets.items()})
+    ic({field: test_target.sum(-2) for field, test_target in test_targets.items()})
 
     return Data(
         train_docs=train_docs,
@@ -319,7 +322,8 @@ def set_up_data(data: Split_Data) -> Data:
 def train_model(
     data_loader: Data_Loader,
     vocab: Sequence[str],
-    id_label_dict: dict[str, str],
+    id_label_dicts: Collection[dict[str, str]],
+    target_names: Collection[str],
     num_topics: int = 50,
     hid_size: int = 500,
     hid_num: int = 1,
@@ -338,7 +342,8 @@ def train_model(
 
     prodslda = ProdSLDA(
         vocab=vocab,
-        id_label_dicts=[id_label_dict],
+        id_label_dicts=id_label_dicts,
+        target_names=target_names,
         num_topics=num_topics,
         hid_size=hid_size,
         hid_num=hid_num,
@@ -365,6 +370,102 @@ def train_model(
     return prodslda.eval()
 
 
+def retrain_model_cli():
+    """Add some CLI arguments to the retraining of the model."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "path",
+        type=str,
+        help="The path to the directory containing the training data",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="The seed to use for pseudo random number generation",
+    )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=250,
+        help="The maximum number of training epochs per batch of data",
+    )
+    parser.add_argument(
+        "--max-len",
+        type=int,
+        default=None,
+        help="The maximum number of training documents",
+    )
+    parser.add_argument(
+        "--skip-cache",
+        action="store_true",
+        help="Whether to skip the cached train / test data, effectively forcing a re-generation.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Whether to print various logs to the stdout during training.",
+    )
+
+    args = parser.parse_args()
+    ic.enabled = args.verbose
+
+    path = Path(args.path)
+
+    try:
+        if args.skip_cache:
+            raise FileNotFoundError()
+        data = load_data(path)
+    except FileNotFoundError:
+        print("Processed data not found. Generating it...")
+        data = make_data(path, always_include_confirmed=True, max_len=args.max_len)
+        save_data(path, data)
+
+    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data_loader = default_data_loader(
+        train_docs, *train_targets.values(), device=device, dtype=torch.float
+    )
+
+    prodslda = train_model(
+        data_loader,
+        vocab=data.train.words.tolist(),
+        id_label_dicts=[
+            {
+                id: label
+                for id, label in zip(
+                    data.train.target_data[field].uris,
+                    data.train.target_data[field].labels,
+                )
+            }
+            for field in train_targets.keys()
+        ],
+        target_names=list(data.train.target_data.keys()),
+        device=device,
+        seed=args.seed,
+        max_epochs=args.max_epochs,
+    )
+
+    save_model(prodslda, path)
+
+    for i, field in enumerate(train_targets.keys()):
+        # load the list of discipline titles for more readable outputs
+        titles = data.train.target_data[field].labels
+
+        # evaluate the newly trained model
+        print("evaluating model on train data")
+        eval_model(
+            prodslda, train_docs, train_targets[field], titles, eval_site=f"a_{i}"
+        )
+
+        if len(test_docs) > 0:
+            print("evaluating model on test data")
+            eval_model(
+                prodslda, test_docs, test_targets[field], titles, eval_site=f"a_{i}"
+            )
+
+
 def run_optuna_study(
     path: Path,
     n_trials=25,
@@ -378,7 +479,7 @@ def run_optuna_study(
         factory=ProdSLDA,
         data_loader=default_data_loader(
             train_docs,
-            train_targets,
+            *train_targets.values(),
             device=device,
             dtype=torch.float,
         ),
@@ -494,90 +595,3 @@ def run_optuna_study_cli():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     run_optuna_study(path=path, n_trials=args.num_trials, device=device)
-
-
-def retrain_model_cli():
-    """Add some CLI arguments to the retraining of the model."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "path",
-        type=str,
-        help="The path to the directory containing the training data",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="The seed to use for pseudo random number generation",
-    )
-    parser.add_argument(
-        "--max-epochs",
-        type=int,
-        default=250,
-        help="The maximum number of training epochs per batch of data",
-    )
-    parser.add_argument(
-        "-n",
-        type=int,
-        default=None,
-        help="The maximum number of training documents",
-    )
-    parser.add_argument(
-        "--skip-cache",
-        action="store_true",
-        help="Whether to skip the cached train / test data, effectively forcing a re-generation.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Whether to print various logs to the stdout during training.",
-    )
-
-    args = parser.parse_args()
-    ic.enabled = args.verbose
-
-    path = Path(args.path)
-
-    try:
-        if args.skip_cache:
-            raise FileNotFoundError()
-        data = load_data(path)
-    except FileNotFoundError:
-        print("Processed data not found. Generating it...")
-        data = make_data(path, n=args.n, always_include_confirmed=True)
-        save_data(path, data)
-
-    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data_loader = default_data_loader(
-        train_docs, train_targets, device=device, dtype=torch.float
-    )
-
-    prodslda = train_model(
-        data_loader,
-        vocab=data.train.words.tolist(),
-        id_label_dict={
-            id: label
-            for id, label in zip(
-                data.train.target_data[Fields.TAXONID.value].uris,
-                data.train.target_data[Fields.TAXONID.value].labels,
-            )
-        },
-        device=device,
-        seed=args.seed,
-        max_epochs=args.max_epochs,
-    )
-
-    save_model(prodslda, path)
-
-    # load the list of discipline titles for more readable outputs
-    titles = data.train.target_data[Fields.TAXONID.value].labels
-
-    # evaluate the newly trained model
-    print("evaluating model on train data")
-    eval_model(prodslda, train_docs, train_targets, titles, eval_site="a_0")
-
-    if len(test_docs) > 0:
-        print("evaluating model on test data")
-        eval_model(prodslda, test_docs, test_targets, titles, eval_site="a_0")

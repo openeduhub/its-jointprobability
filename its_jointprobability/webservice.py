@@ -48,21 +48,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(ProdSLDA, data_dir, device)
 
-    # collect the possible discipline values in an Enum
-    Disciplines_Enum = Enum(
-        "Disciplines_Enum",
-        dict((discipline, discipline) for discipline in model.id_label_dict.values()),
-        type=str,
-    )
-    Disciplines_Enum_URI = Enum(
-        "Disciplines_URI_Enum",
-        dict((uri, uri) for uri in model.id_label_dict.keys()),
-        type=str,
-    )
-
-    disciplines = [Disciplines_Enum(disc) for disc in model.id_label_dict.values()]
-    uris = [Disciplines_Enum_URI(uri) for uri in model.id_label_dict.keys()]
-
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
 
@@ -70,15 +55,15 @@ def main():
         num_samples: int = Field(
             default=100 if not debug else 2, gt=1, le=100000 if not debug else 10
         )
-        num_predictions: int = Field(default=len(uris), gt=0, le=len(uris))
+        num_predictions: int = Field(default=10, gt=0)
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)
 
     # classes that define interfaces for the API
-    class Discipline(BaseModel):
+    class Prediction_Score(BaseModel):
         """An individual prediction for a particular school discipline."""
 
-        id: Disciplines_Enum_URI
-        name: Disciplines_Enum
+        id: str
+        name: str
         mean_prob: float
         median_prob: float
         prob_interval: list[float] = Field(min_items=2, max_items=2)
@@ -86,7 +71,7 @@ def main():
     class Prediction_Result(BaseModel):
         """The output of the prediction."""
 
-        disciplines: list[Discipline]
+        predictions: dict[str, list[Prediction_Score]]
         version: str = __version__
 
     class Webservice:
@@ -98,44 +83,57 @@ def main():
 
         def predict_disciplines(self, inp: Prediction_Data) -> Prediction_Result:
             try:
-                posterior_samples = self.model.draw_posterior_samples_from_texts(
-                    inp.text,
-                    tokens=self.token_dict,
-                    num_samples=inp.num_samples,
-                    return_sites=["a"],
-                )["a"].squeeze(-2)
+                posterior_samples_by_field = (
+                    self.model.draw_posterior_samples_from_texts(
+                        inp.text,
+                        tokens=self.token_dict,
+                        num_samples=inp.num_samples,
+                        return_sites=[
+                            site for site in model.return_sites if "a_" == site[:2]
+                        ],
+                    )
+                )
             except RuntimeError:
-                return Prediction_Result(disciplines=[])
+                return Prediction_Result(predictions=dict())
 
-            probs = F.sigmoid(posterior_samples)
-            mean_probs = probs.mean(0)
-            median_probs = probs.median(0)[0]
-            intervals: list[list[float]] = (
-                pyro.ops.stats.hpdi(probs, inp.interval_size).squeeze(-1).T
-            ).tolist()
+            predictions = dict()
+            for field, posterior_samples, id_label_dict in zip(
+                model.target_names,
+                posterior_samples_by_field.values(),
+                model.id_label_dicts,
+            ):
+                probs = F.sigmoid(posterior_samples.squeeze(-2))
+                mean_probs = probs.mean(0)
+                median_probs = probs.median(0)[0]
+                intervals: list[list[float]] = (
+                    pyro.ops.stats.hpdi(probs, inp.interval_size).squeeze(-1).T
+                ).tolist()
 
-            disciplines = sorted(
-                [
-                    Discipline(
-                        id=uri,
-                        name=label,
-                        mean_prob=float(mean_prob),
-                        median_prob=float(median_prob),
-                        prob_interval=interval,
-                    )
-                    for label, uri, mean_prob, median_prob, interval in zip(
-                        Disciplines_Enum,
-                        Disciplines_Enum_URI,
-                        mean_probs,
-                        median_probs,
-                        intervals,
-                    )
-                ],
-                key=lambda x: x.median_prob,
-                reverse=True,
-            )[: inp.num_predictions]
+                prediction = sorted(
+                    [
+                        Prediction_Score(
+                            id=uri,
+                            name=label,
+                            mean_prob=float(mean_prob),
+                            median_prob=float(median_prob),
+                            prob_interval=interval,
+                        )
+                        for label, uri, mean_prob, median_prob, interval in zip(
+                            id_label_dict.values(),
+                            id_label_dict.keys(),
+                            mean_probs,
+                            median_probs,
+                            intervals,
+                        )
+                    ],
+                    key=lambda x: x.median_prob,
+                    reverse=True,
+                )
+                predictions[field] = prediction[
+                    : min(len(prediction), inp.num_predictions)
+                ]
 
-            return Prediction_Result(disciplines=disciplines)
+            return Prediction_Result(predictions=predictions)
 
         @property
         def app(self) -> FastAPI:
