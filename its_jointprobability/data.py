@@ -20,7 +20,7 @@ class Split_Data(NamedTuple):
 
 
 def make_data(
-    path: Path, n: Optional[int] = None, always_include_confirmed=True, **kwargs
+    path: Path, n: Optional[int] = None, always_include_confirmed=True, seed=0, **kwargs
 ) -> Split_Data:
     # create the cache directory
     nlp_cache = path / "nlp_cache"
@@ -35,10 +35,27 @@ def make_data(
 
     split_data = split_train_test(data)
 
+    def get_train_data(x: Split_Data):
+        return torch.tensor(split_data.train.target_data[Fields.TAXONID.value].arr)
+
+    # if the test data set is empty, create one from the training data
+    # by randomly taking 5% of the editorially confirmed materials
+    if len(split_data.test.editor_arr) == 0:
+        size = split_data.train.editor_arr.sum() // 20
+        editor_indices = np.where(split_data.train.editor_arr)[0]
+        rng = np.random.default_rng(seed=seed)
+        test_indices = rng.choice(editor_indices, size)
+        test_mask = np.zeros_like(split_data.train.editor_arr, dtype=bool)
+        test_mask[test_indices] = True
+
+        split_data = Split_Data(
+            train=subset_data_points(split_data.train, np.where(~test_mask)[0]),
+            test=subset_data_points(split_data.train, np.where(test_mask)[0]),
+        )
+
     kept = np.array(
         balanced_subset_mask(
-            target=torch.tensor(split_data.train.target_data[Fields.TAXONID.value].arr),
-            target_size_per_category=n,
+            target=get_train_data(split_data), target_size_per_category=n
         ),
         dtype=bool,
     )
