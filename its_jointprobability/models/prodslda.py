@@ -36,9 +36,8 @@ class ProdSLDA(Model):
     def __init__(
         self,
         vocab: Sequence[str],
-        uris: Sequence[str],
+        id_label_dict: dict[str, str],
         num_topics: int,
-        labels: Optional[Sequence[str]] = None,
         hid_size: int = 100,
         hid_num: int = 1,
         dropout: float = 0.2,
@@ -46,16 +45,15 @@ class ProdSLDA(Model):
         nu_scale: float = 10.0,
         target_scale: float = 1.0,
         use_batch_normalization: bool = True,
-        observe_negative_targets=torch.tensor(True),
+        observe_negative_targets: torch.Tensor = torch.tensor(True),
         device: Optional[torch.device] = None,
     ):
         vocab_size = len(vocab)
-        target_size = len(uris)
+        target_size = len(id_label_dict)
         super().__init__()
         self.vocab = vocab
         self.vocab_size = vocab_size
-        self.uris = uris
-        self.labels = labels if labels is not None else ["" for _ in uris]
+        self.id_label_dict = id_label_dict
         self.target_size = target_size
         self.num_topics = num_topics
         self.hid_size = hid_size
@@ -70,8 +68,7 @@ class ProdSLDA(Model):
 
         self.args = {
             "vocab": self.vocab,
-            "uris": self.uris,
-            "labels": self.labels,
+            "id_label_dict": self.id_label_dict,
             "num_topics": self.num_topics,
             "hid_size": self.hid_size,
             "hid_num": self.hid_num,
@@ -264,8 +261,7 @@ def set_up_data(data: Split_Data) -> Data:
 def train_model(
     data_loader: Data_Loader,
     vocab: Sequence[str],
-    uris: Sequence[str],
-    labels: Sequence[str],
+    id_label_dict: dict[str, str],
     num_topics: int = 50,
     hid_size: int = 500,
     hid_num: int = 1,
@@ -284,8 +280,7 @@ def train_model(
 
     prodslda = ProdSLDA(
         vocab=vocab,
-        uris=uris,
-        labels=labels,
+        id_label_dict=id_label_dict,
         num_topics=num_topics,
         hid_size=hid_size,
         hid_num=hid_num,
@@ -499,8 +494,13 @@ def retrain_model_cli():
     prodslda = train_model(
         data_loader,
         vocab=data.train.words.tolist(),
-        uris=data.train.target_data[Fields.TAXONID.value].uris.tolist(),
-        labels=data.train.target_data[Fields.TAXONID.value].labels.tolist(),
+        id_label_dict={
+            id: label
+            for id, label in zip(
+                data.train.target_data[Fields.TAXONID.value].uris,
+                data.train.target_data[Fields.TAXONID.value].labels,
+            )
+        },
         device=device,
         seed=args.seed,
         max_epochs=args.max_epochs,
