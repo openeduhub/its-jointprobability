@@ -87,10 +87,6 @@ def split_train_test(data: BoW_Data) -> Split_Data:
 
 def save_data(path: Path, data: Split_Data):
     torch.save(data, path / "data.pt")
-    torch.save(data.train.words, path / "words.pt")
-    for field, target_data in data.train.target_data.items():
-        torch.save(target_data.labels, path / f"{field}_labels.pt")
-        torch.save(target_data.uris, path / f"{field}_uris.pt")
 
 
 def load_data(path: Path) -> Split_Data:
