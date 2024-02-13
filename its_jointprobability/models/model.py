@@ -418,6 +418,7 @@ def eval_model(
     data: torch.Tensor,
     targets: torch.Tensor,
     target_values: Iterable,
+    eval_site: str,
 ) -> Quality_Result:
     samples = F.sigmoid(
         model.draw_posterior_samples(
@@ -426,9 +427,9 @@ def eval_model(
                 device=model.device,
                 dtype=torch.float,
             ),
-            return_sites=["a"],
+            return_sites=[eval_site],
             num_samples=100,
-        )["a"]
+        )[eval_site]
     )
     global_measures = quality_measures(
         samples, targets.to(model.device).float(), mean_dim=0, cutoff=None

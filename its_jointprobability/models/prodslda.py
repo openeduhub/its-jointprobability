@@ -1,5 +1,7 @@
 import argparse
-from collections.abc import Sequence
+import operator as op
+from collections.abc import Collection, Sequence
+from functools import reduce
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -30,13 +32,10 @@ class ProdSLDA(Model):
     A modification of the ProdLDA model to support supervised classification.
     """
 
-    return_sites = ("target", "nu", "a")
-    return_site_cat_dim = {"nu": 0, "a": -1, "target": -1}
-
     def __init__(
         self,
         vocab: Sequence[str],
-        id_label_dict: dict[str, str],
+        id_label_dicts: Collection[dict[str, str]],
         num_topics: int,
         hid_size: int = 100,
         hid_num: int = 1,
@@ -49,12 +48,30 @@ class ProdSLDA(Model):
         device: Optional[torch.device] = None,
     ):
         vocab_size = len(vocab)
-        target_size = len(id_label_dict)
+        target_sizes = [len(id_label_dict) for id_label_dict in id_label_dicts]
+
+        self.return_sites = tuple(
+            reduce(
+                op.add,
+                [
+                    [f"{x}_{i}" for x in ("target", "nu", "a")]
+                    for i, _ in enumerate(target_sizes)
+                ],
+            )
+        )
+        self.return_site_cat_dim = reduce(
+            op.or_,
+            [
+                {f"nu_{i}": 0, f"a_{i}": -1, f"target_{i}": -1}
+                for i, _ in enumerate(target_sizes)
+            ],
+        )
+
         super().__init__()
         self.vocab = vocab
         self.vocab_size = vocab_size
-        self.id_label_dict = id_label_dict
-        self.target_size = target_size
+        self.id_label_dicts = id_label_dicts
+        self.target_sizes = target_sizes
         self.num_topics = num_topics
         self.hid_size = hid_size
         self.hid_num = hid_num
@@ -68,7 +85,7 @@ class ProdSLDA(Model):
 
         self.args = {
             "vocab": self.vocab,
-            "id_label_dict": self.id_label_dict,
+            "id_label_dicts": self.id_label_dicts,
             "num_topics": self.num_topics,
             "hid_size": self.hid_size,
             "hid_num": self.hid_num,
@@ -93,10 +110,10 @@ class ProdSLDA(Model):
         )
 
         for _ in range(hid_num - 1):
-            self.encoder.append(nn.LeakyReLU())
+            self.encoder.append(nn.Sigmoid())
             self.encoder.append(nn.Linear(hid_size, hid_size))
 
-        self.encoder.append(nn.LeakyReLU())
+        self.encoder.append(nn.Sigmoid())
         self.encoder.append(nn.Dropout(dropout))
         self.encoder.append(nn.Linear(hid_size, num_topics * 2))
         if use_batch_normalization:
@@ -104,19 +121,36 @@ class ProdSLDA(Model):
 
         self.to(device)
 
-    def model(self, docs: torch.Tensor, targets: Optional[torch.Tensor] = None):
-        targets_plate = pyro.plate("targets", self.target_size, dim=-2)
-        docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
+    def model(
+        self,
+        docs: torch.Tensor,
+        *targets: torch.Tensor,
+        obs_masks: Optional[Sequence[torch.Tensor]] = None,
+    ):
+        # if no observations mask has been given, ignore any docs that
+        # do not have any assigned labels for that given target
+        if obs_masks is None:
+            obs_masks = [target.sum(-1) > 0 for target in targets]
 
-        # # the target application coefficients
-        with targets_plate:
-            nu = pyro.sample(
-                "nu",
-                dist.Normal(
-                    self.nu_loc * docs.new_ones(self.num_topics),
-                    self.nu_scale * docs.new_ones(self.num_topics),
-                ).to_event(1),
-            )
+        target_plates = [
+            pyro.plate(f"target_plate_{i}", size, dim=-2)
+            for i, size in enumerate(self.target_sizes)
+        ]
+        docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
+
+        # the target application coefficients
+        nus: list[torch.Tensor] = list()
+        for i, target_plate in enumerate(target_plates):
+            with target_plate:
+                nus.append(
+                    pyro.sample(
+                        f"nu_{i}",
+                        dist.Normal(
+                            self.nu_loc * docs.new_ones(self.num_topics),
+                            self.nu_scale * docs.new_ones(self.num_topics),
+                        ).to_event(1),
+                    )
+                )
 
         with docs_plate:
             logtheta_loc = docs.new_zeros(self.num_topics)
@@ -144,15 +178,21 @@ class ProdSLDA(Model):
                 obs=docs,
             )
 
-            with targets_plate:
-                a = pyro.sample("a", dist.Normal((nu.squeeze(-2) @ theta.T), 10))
-                with pyro.poutine.scale(scale=self.target_scale):
-                    target = pyro.sample(
-                        "target",
-                        dist.Bernoulli(logits=a),  # type: ignore
-                        obs=targets.swapaxes(-1, -2) if targets is not None else None,
-                        infer={"enumerate": "parallel"},
+            for i, (target_plate, nu) in enumerate(zip(target_plates, nus)):
+                with target_plate:
+                    a = pyro.sample(
+                        f"a_{i}", dist.Normal((nu.squeeze(-2) @ theta.T), 10)
                     )
+                    with pyro.poutine.scale(scale=self.target_scale):
+                        target = pyro.sample(
+                            f"target_{i}",
+                            dist.Bernoulli(logits=a),  # type: ignore
+                            obs=targets[i].swapaxes(-1, -2)
+                            if len(targets) > i
+                            else None,
+                            obs_mask=obs_masks[i] if len(obs_masks) > i else None,
+                            infer={"enumerate": "parallel"},
+                        )
 
     def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pyro.module("encoder", self.encoder, update_module_params=True)
@@ -164,26 +204,39 @@ class ProdSLDA(Model):
     def guide(
         self,
         docs: torch.Tensor,
-        targets: Optional[torch.Tensor] = None,
+        *targets: torch.Tensor,
+        obs_masks: Optional[Sequence[torch.Tensor]] = None,
     ):
-        targets_plate = pyro.plate("targets", self.target_size, dim=-2)
-        docs_plate = pyro.plate("documents", docs.shape[0], dim=-1)
+        if obs_masks is None:
+            obs_masks = [target.sum(-1) > 0 for target in targets]
+
+        target_plates = [
+            pyro.plate(f"target_plate_{i}", size, dim=-2)
+            for i, size in enumerate(self.target_sizes)
+        ]
+        docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
 
         # variational parameters for the relationship between topics and targets
-        mu_q = pyro.param(
-            "mu",
-            lambda: torch.randn(self.target_size, self.num_topics)
-            .unsqueeze(-2)
-            .to(docs.device),
-        )
-        sigma_q = pyro.param(
-            "sigma",
-            lambda: docs.new_ones(self.target_size, self.num_topics).unsqueeze(-2),
-            constraint=dist.constraints.positive,
-        )
+        nus_q: list[torch.Tensor] = list()
+        for i, (target_plate, target_size) in enumerate(
+            zip(target_plates, self.target_sizes)
+        ):
+            mu_q = pyro.param(
+                f"mu_{i}",
+                lambda: torch.randn(target_size, self.num_topics)
+                .unsqueeze(-2)
+                .to(docs.device),
+            )
+            sigma_q = pyro.param(
+                f"sigma_{i}",
+                lambda: docs.new_ones(target_size, self.num_topics).unsqueeze(-2),
+                constraint=dist.constraints.positive,
+            )
 
-        with targets_plate:
-            nu_q = pyro.sample("nu", dist.Normal(mu_q, sigma_q).to_event(1))
+            with target_plate:
+                nus_q.append(
+                    pyro.sample(f"nu_{i}", dist.Normal(mu_q, sigma_q).to_event(1))
+                )
 
         with docs_plate:
             logtheta_q = pyro.sample(
@@ -191,28 +244,33 @@ class ProdSLDA(Model):
             )
             theta_q = F.softmax(logtheta_q, -1)
 
-            with targets_plate:
-                a_q_scale = pyro.param(
-                    "a_q_scale",
-                    lambda: docs.new_ones([self.target_size, self.num_topics]),
-                    constraint=dist.constraints.positive,
-                )
-                a_q = pyro.sample(
-                    "a",
-                    dist.Normal(
-                        (nu_q.squeeze(-2) @ theta_q.T), (a_q_scale @ theta_q.T)
-                    ),
-                )
+            for i, (target_plate, target_size, nu_q) in enumerate(
+                zip(target_plates, self.target_sizes, nus_q)
+            ):
+                with target_plate:
+                    a_q_scale = pyro.param(
+                        f"a_q_scale_{i}",
+                        lambda: docs.new_ones([target_size, self.num_topics]),
+                        constraint=dist.constraints.positive,
+                    )
+                    a_q = pyro.sample(
+                        f"a_{i}",
+                        dist.Normal(
+                            (nu_q.squeeze(-2) @ theta_q.T), (a_q_scale @ theta_q.T)
+                        ),
+                    )
 
     def clean_up_posterior_samples(
         self, posterior_samples: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
-        if "target" in posterior_samples:
-            posterior_samples["target"] = posterior_samples["target"].swapaxes(-1, -2)
-        if "a" in posterior_samples:
-            posterior_samples["a"] = posterior_samples["a"].swapaxes(-1, -2)
-        if "nu" in posterior_samples:
-            posterior_samples["nu"] = posterior_samples["nu"].squeeze(-2)
+        for i, _ in enumerate(self.target_sizes):
+            target, a, nu = [f"{x}_{i}" for x in ["target", "a", "nu"]]
+            if target in posterior_samples:
+                posterior_samples[target] = posterior_samples[target].swapaxes(-1, -2)
+            if a in posterior_samples:
+                posterior_samples[a] = posterior_samples[a].swapaxes(-1, -2)
+            if nu in posterior_samples:
+                posterior_samples[nu] = posterior_samples[nu].squeeze(-2)
 
         return posterior_samples
 
@@ -280,7 +338,7 @@ def train_model(
 
     prodslda = ProdSLDA(
         vocab=vocab,
-        id_label_dict=id_label_dict,
+        id_label_dicts=[id_label_dict],
         num_topics=num_topics,
         hid_size=hid_size,
         hid_num=hid_num,
@@ -294,7 +352,7 @@ def train_model(
 
     prodslda.run_svi(
         data_loader=data_loader,
-        elbo=pyro.infer.TraceGraph_ELBO(
+        elbo=pyro.infer.TraceEnum_ELBO(
             num_particles=3,
             vectorize_particles=False,
         ),
@@ -469,10 +527,15 @@ def retrain_model_cli():
         action="store_true",
         help="Whether to skip the cached train / test data, effectively forcing a re-generation.",
     )
-
-    ic.enable()
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Whether to print various logs to the stdout during training.",
+    )
 
     args = parser.parse_args()
+    ic.enabled = args.verbose
+
     path = Path(args.path)
 
     try:
@@ -513,8 +576,8 @@ def retrain_model_cli():
 
     # evaluate the newly trained model
     print("evaluating model on train data")
-    eval_model(prodslda, train_docs, train_targets, titles)
+    eval_model(prodslda, train_docs, train_targets, titles, eval_site="a_0")
 
     if len(test_docs) > 0:
         print("evaluating model on test data")
-        eval_model(prodslda, test_docs, test_targets, titles)
+        eval_model(prodslda, test_docs, test_targets, titles, eval_site="a_0")

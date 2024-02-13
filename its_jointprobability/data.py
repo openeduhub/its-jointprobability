@@ -28,7 +28,10 @@ def make_data(
 
     data = generate_data(
         path / "data.json",
-        target_fields=[Fields.TAXONID.value],
+        target_fields=[
+            Fields.TAXONID.value,
+            Fields.EDUCATIONAL_CONTEXT.value,
+        ],
         cache_dir=nlp_cache,
         **kwargs,
     )
