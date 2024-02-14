@@ -2,7 +2,7 @@
   description = "A Bayesian approach to metadata prediction in education";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
     flake-utils.url = "github:numtide/flake-utils";
     nix-filter.url = "github:numtide/nix-filter";
     openapi-checks = {
@@ -28,8 +28,8 @@
       "https://cuda-maintainers.cachix.org"
     ];
     trusted-public-keys = [
-      "cuda-maintainers.cachix.org-1:0dq3bujKpuEPMCX6U4WylrUDZ9JyUG0VpVZa7CNfq5E="
       "numtide.cachix.org-1:2ps1kLBUWjxIneOy1Ik6cQjb41X0iXVXeHigGmycPPE="
+      "cuda-maintainers.cachix.org-1:0dq3bujKpuEPMCX6U4WylrUDZ9JyUG0VpVZa7CNfq5E="
     ];
   };
 
@@ -57,7 +57,7 @@
 
         openapi-checks = self.inputs.openapi-checks.lib.${system};
         nix-filter = self.inputs.nix-filter.lib;
-        get-python = pkgs: pkgs.python310;
+        get-python = pkgs: pkgs.python3;
 
         ### list of python packages required to build / run the application
         python-packages-deploy = py-pkgs:
@@ -95,7 +95,6 @@
             ipython
             mypy
             # library stubs for mypy
-            types-tqdm
             pandas-stubs
           ]
           ++ (python-packages-build py-pkgs);
