@@ -229,18 +229,18 @@ class ProdSLDA(Model):
             lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
             constraint=dist.constraints.positive,
         )
-        sigma_q = pyro.param(
-            "sigma",
+        cov_diag = pyro.param(
+            "cov_diag",
             lambda: docs.new_ones(self.num_topics, n),
             constraint=dist.constraints.positive,
         )
 
         ic(mu_q.shape)
-        ic(sigma_q.shape)
+        ic(cov_diag.shape)
 
         nu_q = pyro.sample(
             "nu",
-            dist.LowRankMultivariateNormal(mu_q, cov_factor, sigma_q).to_event(1),
+            dist.LowRankMultivariateNormal(mu_q, cov_factor, cov_diag).to_event(1),
         )
 
         ic(nu_q.shape)
