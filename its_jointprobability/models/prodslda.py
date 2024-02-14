@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 import its_jointprobability.models.prodslda as prodslda_module
+import numpy as np
 import optuna
 import pyro
 import pyro.distributions as dist
@@ -52,21 +53,19 @@ class ProdSLDA(Model):
         vocab_size = len(vocab)
         target_sizes = [len(id_label_dict) for id_label_dict in id_label_dicts]
 
+        ns = list(range(len(target_sizes)))
+
         self.return_sites = tuple(
-            reduce(
-                op.add,
-                [[f"target_{i}"] for i, _ in enumerate(target_sizes)] + [["nu", "a"]],
-            )
+            [f"target_{i}" for i in ns]
+            + [f"probs_{i}" for i in ns]
+            + [f"sigma_{i}" for i in ns[1:]]
+            + ["nu", "a"]
         )
-        self.return_site_cat_dim = reduce(
-            op.or_,
-            [
-                {
-                    f"target_{i}": -2,
-                }
-                for i, _ in enumerate(target_sizes)
-            ]
-            + [{"nu": -4, "a": -2}],
+        self.return_site_cat_dim = (
+            {f"target_{i}": -2 for i in ns}
+            | {f"probs_{i}": -2 for i in ns}
+            | {f"sigma_{i}": -4 for i in ns[1:]}
+            | {"nu": -4, "a": -2}
         )
 
         super().__init__()
@@ -136,7 +135,10 @@ class ProdSLDA(Model):
         docs: torch.Tensor,
         *targets: torch.Tensor,
         obs_masks: Optional[Sequence[torch.Tensor]] = None,
+        correlated_nus: bool = True,
+        bias_from_previous_targets: bool = True,
     ):
+        n = sum(self.target_sizes)
         # if no observations mask has been given, ignore any docs that
         # do not have any assigned labels for that given target
         if obs_masks is None:
@@ -144,17 +146,30 @@ class ProdSLDA(Model):
 
         docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
 
+        # the matrix mapping the relationship between latent topic and targets
         nu = pyro.sample(
             "nu",
             dist.Normal(
                 torch.tensor(self.nu_loc, device=docs.device),
                 torch.tensor(self.nu_scale, device=docs.device),
             )
-            .expand(torch.Size([self.num_topics, sum(self.target_sizes)]))
+            .expand(torch.Size([self.num_topics, n]))
             .to_event(2),
         )
-
         ic(nu.shape)
+
+        # the influence of the previous targets on subsequent ones
+        if bias_from_previous_targets:
+            sigmas: list[torch.Tensor] = [torch.tensor([])]
+            for i, (cum_size, cur_size) in enumerate(
+                zip(np.cumsum(self.target_sizes), self.target_sizes[1:])
+            ):
+                sigma = pyro.sample(
+                    f"sigma_{i+1}",
+                    dist.Normal(docs.new_zeros([cum_size, cur_size]), 1).to_event(2),
+                )
+                ic(sigma.shape)
+                sigmas.append(sigma)
 
         with docs_plate:
             logtheta_loc = docs.new_zeros(self.num_topics)
@@ -189,30 +204,45 @@ class ProdSLDA(Model):
                 dist.Normal(torch.matmul(theta, nu), 1).to_event(1),
             )
             ic(a.shape)
+
             a_split = a.split(self.target_sizes, -1)
 
+            prev_targets: list[torch.Tensor] = list()
             with pyro.poutine.scale(scale=self.target_scale):
                 for i in range(len(self.target_sizes)):
+                    # the influence of previous target values on the current one
+                    if bias_from_previous_targets and i > 0:
+                        prev_targets_tensor = torch.concat(prev_targets, dim=-1)
+                        prev_targets_effect = torch.matmul(
+                            prev_targets_tensor,
+                            sigmas[i],  # type: ignore
+                        )
+                        ic(prev_targets_effect.shape)
+                    else:
+                        prev_targets_effect = torch.tensor(0)
+
+                    probs = pyro.deterministic(
+                        f"probs_{i}", F.sigmoid(a_split[i] + prev_targets_effect)
+                    )
+                    ic(probs.shape)
+
                     target = pyro.sample(
                         f"target_{i}",
-                        dist.Bernoulli(logits=a_split[i]).to_event(1),  # type: ignore
+                        dist.Bernoulli(probs).to_event(1),  # type: ignore
                         obs=targets[i] if len(targets) > i else None,
                         obs_mask=obs_masks[i] if len(obs_masks) > i else None,
                     )
                     ic(target.shape)
 
-    def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        pyro.module("encoder", self.encoder, update_module_params=True)
-        logtheta_loc, logtheta_logvar = self.encoder(doc).split(self.num_topics, -1)
-        logtheta_scale = F.softplus(logtheta_logvar) + 1e-7
-
-        return logtheta_loc, logtheta_scale
+                    prev_targets.append(target)
 
     def guide(
         self,
         docs: torch.Tensor,
         *targets: torch.Tensor,
         obs_masks: Optional[Sequence[torch.Tensor]] = None,
+        correlated_nus: bool = True,
+        bias_from_previous_targets: bool = True,
     ):
         n = sum(self.target_sizes)
         if obs_masks is None:
@@ -224,26 +254,48 @@ class ProdSLDA(Model):
         mu_q = pyro.param(
             "mu", lambda: torch.randn(self.num_topics, n, device=docs.device)
         )
-        cov_factor = pyro.param(
-            "cov_factor",
-            lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
-            constraint=dist.constraints.positive,
-        )
         cov_diag = pyro.param(
             "cov_diag",
             lambda: docs.new_ones(self.num_topics, n),
             constraint=dist.constraints.positive,
         )
+        if correlated_nus:
+            cov_factor = pyro.param(
+                "cov_factor",
+                lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
+                constraint=dist.constraints.positive,
+            )
 
-        ic(mu_q.shape)
-        ic(cov_diag.shape)
-
-        nu_q = pyro.sample(
-            "nu",
-            dist.LowRankMultivariateNormal(mu_q, cov_factor, cov_diag).to_event(1),
-        )
+            nu_q = pyro.sample(
+                "nu",
+                dist.LowRankMultivariateNormal(mu_q, cov_factor, cov_diag).to_event(1),
+            )
+        else:
+            nu_q = pyro.sample(
+                "nu",
+                dist.Normal(mu_q, cov_diag).to_event(2),
+            )
 
         ic(nu_q.shape)
+
+        if bias_from_previous_targets:
+            sigma_qs: list[torch.Tensor] = [torch.tensor([])]
+            for i, (cum_size, cur_size) in enumerate(
+                zip(np.cumsum(self.target_sizes), self.target_sizes[1:])
+            ):
+                sigma_loc = pyro.param(
+                    f"sigma_{i+1}_loc", docs.new_zeros([cum_size, cur_size])
+                )
+                sigma_scale = pyro.param(
+                    f"sigma_{i+1}_scale",
+                    docs.new_ones([cum_size, cur_size]),
+                    constraint=dist.constraints.positive,
+                )
+                sigma_q = pyro.sample(
+                    f"sigma_{i+1}", dist.Normal(sigma_loc, sigma_scale).to_event(2)
+                )
+                ic(sigma_q.shape)
+                sigma_qs.append(sigma_q)
 
         with docs_plate:
             logtheta_q = pyro.sample(
@@ -262,14 +314,36 @@ class ProdSLDA(Model):
                 dist.Normal(torch.matmul(theta_q, nu_q), a_q_scale).to_event(1),
             )
             ic(a_q.shape)
+
             a_q_split = a_q.split(self.target_sizes, -1)
 
+            prev_targets: list[torch.Tensor] = list()
             with pyro.poutine.scale(scale=self.target_scale):
                 for i in range(len(self.target_sizes)):
-                    target = pyro.sample(
+                    # the influence of previous target values on the current one
+                    if bias_from_previous_targets and i > 0:
+                        prev_targets_tensor = torch.concat(prev_targets, dim=-1)
+                        prev_targets_effect = torch.matmul(
+                            prev_targets_tensor,
+                            sigma_qs[i],  # type: ignore
+                        )
+                    else:
+                        prev_targets_effect = torch.tensor(0)
+
+                    probs = F.sigmoid(a_q_split[i] + prev_targets_effect)
+
+                    target_q = pyro.sample(
                         f"target_{i}_unobserved",
-                        dist.Bernoulli(logits=a_q_split[i]).to_event(1),  # type: ignore
+                        dist.Bernoulli(probs).to_event(1),  # type: ignore
                     )
+                    prev_targets.append(target_q)
+
+    def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        pyro.module("encoder", self.encoder, update_module_params=True)
+        logtheta_loc, logtheta_logvar = self.encoder(doc).split(self.num_topics, -1)
+        logtheta_scale = F.softplus(logtheta_logvar) + 1e-7
+
+        return logtheta_loc, logtheta_scale
 
     def clean_up_posterior_samples(
         self, posterior_samples: dict[str, torch.Tensor]
@@ -288,11 +362,6 @@ class ProdSLDA(Model):
             ic(posterior_samples[nu].shape)
 
         return posterior_samples
-
-    def beta(self):
-        # beta matrix elements are the weights of the FC layer on the decoder
-        weights = self.decoder.beta.weight.T
-        return F.softmax(weights, dim=-1).detach()
 
 
 class Data(NamedTuple):
@@ -462,28 +531,27 @@ def retrain_model_cli():
 
     save_model(prodslda, path)
 
-    titles: list[str] = reduce(
-        op.add, (field.labels.tolist() for field in data.train.target_data.values()), []
-    )
+    titles = {key: data.train.target_data[key].labels for key in train_targets.keys()}
+    eval_sites = {key: f"probs_{i}" for i, key in enumerate(train_targets.keys())}
 
     # evaluate the newly trained model
     print("evaluating model on train data")
     eval_model(
-        prodslda,
-        train_docs,
-        torch.concat(list(train_targets.values()), -1),
-        titles,
-        eval_site=f"a",
+        model=prodslda,
+        data=train_docs,
+        targets=train_targets,
+        target_values=titles,
+        eval_sites=eval_sites,
     )
 
     if len(test_docs) > 0:
         print("evaluating model on test data")
         eval_model(
-            prodslda,
-            test_docs,
-            torch.concat(list(test_targets.values()), -1),
-            titles,
-            eval_site=f"a",
+            model=prodslda,
+            data=test_docs,
+            targets=test_targets,
+            target_values=titles,
+            eval_sites=eval_sites,
         )
 
 
