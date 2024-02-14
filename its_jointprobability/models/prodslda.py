@@ -1,4 +1,5 @@
 import argparse
+import math
 import operator as op
 from collections.abc import Collection, Sequence
 from functools import reduce
@@ -37,7 +38,7 @@ class ProdSLDA(Model):
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
         num_topics: int,
-        cov_rank: int = 10,
+        cov_rank: Optional[int] = None,
         hid_size: int = 100,
         hid_num: int = 1,
         dropout: float = 0.2,
@@ -75,7 +76,11 @@ class ProdSLDA(Model):
         self.target_names = target_names
         self.target_sizes = target_sizes
         self.num_topics = num_topics
-        self.cov_rank = cov_rank
+        self.cov_rank = (
+            cov_rank
+            if cov_rank is not None
+            else math.ceil(math.sqrt(sum(target_sizes)))
+        )
         self.hid_size = hid_size
         self.hid_num = hid_num
         self.dropout = dropout
