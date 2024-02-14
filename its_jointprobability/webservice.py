@@ -1,15 +1,14 @@
 """The webservice that allows for interaction with the Bayesian model."""
 import argparse
 from collections.abc import Sequence
-from enum import Enum
 from pathlib import Path
 
 import pyro.ops.stats
 import torch
 import torch.nn.functional as F
 import uvicorn
-from data_utils.defaults import Fields
 from fastapi import FastAPI
+from icecream import ic
 from pydantic import BaseModel, Field
 
 from its_jointprobability._version import __version__
@@ -77,29 +76,30 @@ def main():
     class Webservice:
         """The actual web service."""
 
-        def __init__(self, model: Simple_Model, token_dict: Sequence[str]) -> None:
+        def __init__(self, model: ProdSLDA, token_dict: Sequence[str]) -> None:
             self.model = model
             self.token_dict = token_dict
 
         def predict_disciplines(self, inp: Prediction_Data) -> Prediction_Result:
+            ic.disable()
             try:
                 posterior_samples_by_field = (
                     self.model.draw_posterior_samples_from_texts(
                         inp.text,
                         tokens=self.token_dict,
                         num_samples=inp.num_samples,
-                        return_sites=[
-                            site for site in model.return_sites if "a_" == site[:2]
-                        ],
-                    )
+                        return_sites=["a"],
+                    )["a"].split(self.model.target_sizes, -1)
                 )
             except RuntimeError:
                 return Prediction_Result(predictions=dict())
 
+            ic.enable()
+
             predictions = dict()
             for field, posterior_samples, id_label_dict in zip(
                 model.target_names,
-                posterior_samples_by_field.values(),
+                posterior_samples_by_field,
                 model.id_label_dicts,
             ):
                 probs = F.sigmoid(posterior_samples.squeeze(-2))
