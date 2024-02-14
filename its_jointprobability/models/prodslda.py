@@ -1,12 +1,10 @@
 import argparse
 import math
 import operator as op
-from collections.abc import Collection, Sequence
-from functools import reduce
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-import its_jointprobability.models.prodslda as prodslda_module
 import numpy as np
 import optuna
 import pyro
@@ -48,6 +46,8 @@ class ProdSLDA(Model):
         target_scale: float = 1.0,
         use_batch_normalization: bool = True,
         observe_negative_targets: torch.Tensor = torch.tensor(True),
+        correlated_nus: bool = True,
+        bias_from_previous_targets: bool = True,
         device: Optional[torch.device] = None,
     ):
         vocab_size = len(vocab)
@@ -88,6 +88,8 @@ class ProdSLDA(Model):
         self.target_scale = target_scale
         self.use_batch_normalization = use_batch_normalization
         self.observe_negative_targets = observe_negative_targets
+        self.correlated_nus = correlated_nus
+        self.bias_from_previous_targets = bias_from_previous_targets
         self.device = device
 
         self.args = {
@@ -104,6 +106,8 @@ class ProdSLDA(Model):
             "target_scale": self.target_scale,
             "use_batch_normalization": self.use_batch_normalization,
             "observe_negative_targets": self.observe_negative_targets,
+            "correlated_nus": self.correlated_nus,
+            "bias_from_previous_targets": self.bias_from_previous_targets,
         }
 
         self.decoder = nn.Sequential(
@@ -135,8 +139,6 @@ class ProdSLDA(Model):
         docs: torch.Tensor,
         *targets: torch.Tensor,
         obs_masks: Optional[Sequence[torch.Tensor]] = None,
-        correlated_nus: bool = True,
-        bias_from_previous_targets: bool = True,
     ):
         n = sum(self.target_sizes)
         # if no observations mask has been given, ignore any docs that
@@ -159,7 +161,7 @@ class ProdSLDA(Model):
         ic(nu.shape)
 
         # the influence of the previous targets on subsequent ones
-        if bias_from_previous_targets:
+        if self.bias_from_previous_targets:
             sigmas: list[torch.Tensor] = [torch.tensor([])]
             for i, (cum_size, cur_size) in enumerate(
                 zip(np.cumsum(self.target_sizes), self.target_sizes[1:])
@@ -211,7 +213,7 @@ class ProdSLDA(Model):
             with pyro.poutine.scale(scale=self.target_scale):
                 for i in range(len(self.target_sizes)):
                     # the influence of previous target values on the current one
-                    if bias_from_previous_targets and i > 0:
+                    if self.bias_from_previous_targets and i > 0:
                         prev_targets_tensor = torch.concat(prev_targets, dim=-1)
                         prev_targets_effect = torch.matmul(
                             prev_targets_tensor,
@@ -241,14 +243,13 @@ class ProdSLDA(Model):
         docs: torch.Tensor,
         *targets: torch.Tensor,
         obs_masks: Optional[Sequence[torch.Tensor]] = None,
-        correlated_nus: bool = True,
-        bias_from_previous_targets: bool = True,
     ):
         n = sum(self.target_sizes)
         if obs_masks is None:
             obs_masks = [target.sum(-1) > 0 for target in targets]
 
         docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
+        ic(docs.shape)
 
         # variational parameters for the relationship between topics and targets
         mu_q = pyro.param(
@@ -259,7 +260,7 @@ class ProdSLDA(Model):
             lambda: docs.new_ones(self.num_topics, n),
             constraint=dist.constraints.positive,
         )
-        if correlated_nus:
+        if self.correlated_nus:
             cov_factor = pyro.param(
                 "cov_factor",
                 lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
@@ -278,7 +279,7 @@ class ProdSLDA(Model):
 
         ic(nu_q.shape)
 
-        if bias_from_previous_targets:
+        if self.bias_from_previous_targets:
             sigma_qs: list[torch.Tensor] = [torch.tensor([])]
             for i, (cum_size, cur_size) in enumerate(
                 zip(np.cumsum(self.target_sizes), self.target_sizes[1:])
@@ -321,7 +322,7 @@ class ProdSLDA(Model):
             with pyro.poutine.scale(scale=self.target_scale):
                 for i in range(len(self.target_sizes)):
                     # the influence of previous target values on the current one
-                    if bias_from_previous_targets and i > 0:
+                    if self.bias_from_previous_targets and i > 0:
                         prev_targets_tensor = torch.concat(prev_targets, dim=-1)
                         prev_targets_effect = torch.matmul(
                             prev_targets_tensor,
@@ -560,9 +561,40 @@ def run_optuna_study(
     n_trials=25,
     seed: int = 0,
     device: Optional[torch.device] = None,
+    train_data_len: Optional[int] = None,
+    verbose=False,
 ):
     data = load_data(path)
     train_docs, train_targets, test_docs, test_targets = set_up_data(data)
+
+    if train_data_len is not None:
+        torch.manual_seed(seed)
+        indices = torch.randperm(len(train_docs))[:train_data_len]
+        train_docs, train_targets = (
+            train_docs[indices],
+            {key: value[indices] for key, value in train_targets.items()},
+        )
+
+    ic({key: value.sum(-2) for key, value in train_targets.items()})
+
+    ic.enabled = verbose
+
+    def get_eval_fun(
+        i: int, docs: torch.Tensor, targets: torch.Tensor
+    ) -> Callable[[ProdSLDA], float]:
+        def fun(model: ProdSLDA) -> float:
+            val = model.calculate_metrics(
+                docs,
+                targets=targets,
+                target_site=f"probs_{i}",
+                num_samples=100,
+                mean_dim=0,
+                cutoff=0.2,
+            ).accuracy
+            assert isinstance(val, float)
+            return val
+
+        return fun
 
     objective = set_up_optuna_study(
         factory=ProdSLDA,
@@ -576,27 +608,27 @@ def run_optuna_study(
             "TraceGraph": pyro.infer.TraceGraph_ELBO,
         },
         eval_funs_final=[
-            lambda obj: obj.calculate_metrics(
-                test_docs,
-                targets=test_targets,
-                target_site="target",
-                num_samples=100,
-                mean_dim=0,
-                cutoff=0.2,
-            ).accuracy,  # type: ignore
+            get_eval_fun(i, test_docs, targets)
+            for i, targets in enumerate(test_targets.values())
         ],
-        eval_fun_prune=lambda obj, epoch, loss: obj.calculate_metrics(
-            test_docs,
-            targets=test_targets,
-            target_site="target",
-            num_samples=1,
-            cutoff=1.0,
-        ).accuracy,  # type: ignore
         fix_model_kwargs={
-            "vocab_size": train_docs.shape[-1],
-            "target_size": train_targets.shape[-1],
+            "vocab": data.train.words,
+            "id_label_dicts": [
+                {
+                    id: label
+                    for id, label in zip(
+                        data.train.target_data[field].uris,
+                        data.train.target_data[field].labels,
+                    )
+                }
+                for field in train_targets.keys()
+            ],
+            "target_names": list(train_targets.keys()),
             "use_batch_normalization": True,
             "dropout": 0.2,
+            "target_scale": 1,
+            "nu_loc": -1.7,
+            "nu_scale": 5,
         },
         var_model_kwargs={
             "num_topics": lambda trial: trial.suggest_int(
@@ -604,51 +636,52 @@ def run_optuna_study(
             ),
             "hid_size": lambda trial: trial.suggest_int("hid_size", 10, 1000, log=True),
             "hid_num": lambda trial: trial.suggest_int("hid_num", 1, 3),
-            "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10, 0),
-            "nu_scale": lambda trial: trial.suggest_float("nu_scale", 1, 20),
-            "target_scale": lambda trial: trial.suggest_float(
-                "target_scale", 1e-2, 10, log=True
+            "correlated_nus": lambda trial: trial.suggest_categorical(
+                "correlated_nus", [False, True]
+            ),
+            "bias_from_previous_targets": lambda trial: trial.suggest_categorical(
+                "bias_from_previous_targets", [False, True]
             ),
         },
         vectorize_particles=False,
-        num_particles=lambda trial: 1,
+        num_particles=lambda trial: 3,
         gamma=lambda trial: 1.0,
         min_epochs=5,
         max_epochs=lambda trial: 480,
         device=device,
-        hooks={
-            "svi_self_post_hooks": [
-                lambda obj: print(
-                    "train metrics",
-                    obj.calculate_metrics(
-                        train_docs,
-                        targets=train_targets,
-                        target_site="a",
-                        num_samples=25,
-                        mean_dim=0,
-                        cutoff=None,
-                        post_sample_fun=F.sigmoid,
-                    ),
-                ),
-                lambda obj: print(
-                    "test metrics",
-                    obj.calculate_metrics(
-                        test_docs,
-                        targets=test_targets,
-                        target_site="a",
-                        num_samples=25,
-                        mean_dim=0,
-                        cutoff=None,
-                        post_sample_fun=F.sigmoid,
-                    ),
-                ),
-            ]
-        },
+        # hooks={
+        #     "svi_self_post_hooks": [
+        #         lambda obj: print(
+        #             "train metrics",
+        #             obj.calculate_metrics(
+        #                 train_docs,
+        #                 targets=train_targets,
+        #                 target_site="a",
+        #                 num_samples=25,
+        #                 mean_dim=0,
+        #                 cutoff=None,
+        #                 post_sample_fun=F.sigmoid,
+        #             ),
+        #         ),
+        #         lambda obj: print(
+        #             "test metrics",
+        #             obj.calculate_metrics(
+        #                 test_docs,
+        #                 targets=test_targets,
+        #                 target_site="a",
+        #                 num_samples=25,
+        #                 mean_dim=0,
+        #                 cutoff=None,
+        #                 post_sample_fun=F.sigmoid,
+        #             ),
+        #         ),
+        #     ]
+        # },
     )
 
     study = optuna.create_study(
         study_name="ProdSLDA",
-        directions=["maximize"],
+        directions=["maximize" for _ in train_targets],
         pruner=optuna.pruners.HyperbandPruner(),
         sampler=optuna.samplers.TPESampler(seed=seed),
         storage="sqlite:///prodslda.db",
@@ -673,14 +706,18 @@ def run_optuna_study_cli():
         type=str,
         help="The path to the directory containing the training data",
     )
-    parser.add_argument(
-        "--num-trials",
-        type=int,
-        default=25,
-    )
+    parser.add_argument("--num-trials", type=int, default=25)
+    parser.add_argument("-n", type=int, default=None)
+    parser.add_argument("--verbose", action="store_true")
 
     args = parser.parse_args()
     path = Path(args.path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    run_optuna_study(path=path, n_trials=args.num_trials, device=device)
+    run_optuna_study(
+        path=path,
+        n_trials=args.num_trials,
+        train_data_len=args.n,
+        device=device,
+        verbose=args.verbose,
+    )
