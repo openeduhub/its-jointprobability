@@ -198,7 +198,7 @@ def default_data_loader(
     """
     n = len(tensors[0])
     if batch_size is None:
-        batch_size = math.ceil(min(1024, math.sqrt(n)))
+        batch_size = _default_batch_size(n)
 
     batch_strategy = get_random_batch_strategy(n, batch_size)
 
@@ -218,13 +218,23 @@ def sequential_data_loader(
     """
     n = len(tensors[0])
     if batch_size is None:
-        batch_size = math.ceil(min(1024, math.sqrt(n)))
+        batch_size = _default_batch_size(n)
 
     batch_strategy = get_sequential_batch_strategy(n, batch_size)
 
     return _abstract_data_loader(
         *tensors, batch_strategy=batch_strategy, device=device, dtype=dtype
     )
+
+
+def _default_batch_size(n: int, num_options: int = 5) -> int:
+    center = np.ceil(n ** (2 / 3))
+    options = np.arange(center - num_options, center + num_options + 1)
+    options = options[options > 0]
+    remainders = n % options
+    remainders[remainders == 0] = options[remainders == 0]
+
+    return int(options[remainders.argmax()])
 
 
 def batch_to_list(
