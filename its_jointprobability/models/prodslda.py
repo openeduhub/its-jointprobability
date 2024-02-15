@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 from pprint import pprint
 
+import pickle
 import numpy as np
 import optuna
 import pyro
@@ -46,7 +47,7 @@ class ProdSLDA(Model):
         nu_scale: float = 10.0,
         target_scale: float = 1.0,
         use_batch_normalization: bool = True,
-        correlated_nus: bool = True,
+        correlated_nus: bool = False,
         bias_from_previous_targets: bool = True,
         device: Optional[torch.device] = None,
     ):
@@ -83,8 +84,8 @@ class ProdSLDA(Model):
         self.hid_size = hid_size
         self.hid_num = hid_num
         self.dropout = dropout
-        self.nu_loc = nu_loc
-        self.nu_scale = nu_scale
+        self.nu_loc = float(nu_loc)
+        self.nu_scale = float(nu_scale)
         self.target_scale = target_scale
         self.use_batch_normalization = use_batch_normalization
         self.correlated_nus = correlated_nus
@@ -264,10 +265,13 @@ class ProdSLDA(Model):
             constraint=dist.constraints.positive,
         )
         if self.correlated_nus:
-            cov_factor = pyro.param(
-                "cov_factor",
-                lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
-                constraint=dist.constraints.positive,
+            cov_factor = (
+                pyro.param(
+                    "cov_factor",
+                    lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
+                    constraint=dist.constraints.positive,
+                )
+                + 1e-7
             )
 
             nu_q = pyro.sample(
@@ -413,16 +417,16 @@ def train_model(
     vocab: Sequence[str],
     id_label_dicts: Collection[dict[str, str]],
     target_names: Collection[str],
-    num_topics: int = 100,
-    hid_size: int = 200,
-    hid_num: int = 1,
+    num_topics: int = 64,
+    hid_size: int = 128,
+    hid_num: int = 2,
     dropout: float = 0.2,
-    nu_loc: float = -1.7,
-    nu_scale: float = 15,
-    min_epochs: int = 100,
-    max_epochs: int = 500,
+    nu_loc: float = -2.0,
+    nu_scale: float = 10.0,
+    min_epochs: int = 10,
+    max_epochs: int = 100,
     target_scale: float = 1.0,
-    initial_lr: float = 0.1,
+    initial_lr: float = 0.05,
     gamma: float = 0.75,
     seed: int = 0,
     device: Optional[torch.device] = None,
@@ -513,7 +517,10 @@ def retrain_model_cli():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_loader = default_data_loader(
-        train_docs, *train_targets.values(), device=device, dtype=torch.float
+        train_docs,
+        *train_targets.values(),
+        device=device,
+        dtype=torch.float,
     )
 
     prodslda = train_model(
@@ -594,8 +601,8 @@ def run_optuna_study(
                 target_site=f"probs_{i}",
                 num_samples=100,
                 mean_dim=0,
-                cutoff=0.2,
-            ).accuracy
+                cutoff=None,
+            ).f1_score
             assert isinstance(val, float)
             return val
 
@@ -608,6 +615,7 @@ def run_optuna_study(
             *train_targets.values(),
             device=device,
             dtype=torch.float,
+            batch_size=3500,
         ),
         elbo_choices={"TraceGraph": pyro.infer.TraceGraph_ELBO},
         eval_funs_final=[
@@ -632,34 +640,40 @@ def run_optuna_study(
             "target_scale": 1,
             "nu_loc": -2,
             "nu_scale": 10,
-            "num_topics": 200,
+            "correlated_nus": False,
         },
         var_model_kwargs={
-            "hid_size": lambda trial: trial.suggest_int("hid_size", 100, 500, log=True),
+            "hid_size": lambda trial: trial.suggest_int("hid_size", 50, 500, log=True),
             "hid_num": lambda trial: trial.suggest_int("hid_num", 1, 3),
-            "correlated_nus": lambda trial: trial.suggest_categorical(
-                "correlated_nus", [False, True]
+            "num_topics": lambda trial: trial.suggest_int(
+                "num_topics", 50, 500, log=True
             ),
             "bias_from_previous_targets": lambda trial: trial.suggest_categorical(
-                "bias_from_previous_targets", [False, True]
+                "bias_from_previous_targets", [True, False]
             ),
         },
         vectorize_particles=False,
-        # num_particles=lambda trial: 3,
-        gamma=lambda trial: 1.0,
+        num_particles=lambda trial: 3,
+        gamma=lambda trial: trial.suggest_float("gamma", 1e-3, 1.0, log=True),
         min_epochs=5,
-        max_epochs=lambda trial: 100,
+        max_epochs=lambda trial: 300,
         initial_lr=lambda trial: trial.suggest_float(
             "initial_lr", 1e-3, 1e-1, log=True
         ),
         device=device,
     )
 
+    try:
+        with open(".prodslda_sampler.pkl", "rb") as f:
+            sampler = pickle.load(f)
+    except FileNotFoundError:
+        sampler = optuna.samplers.TPESampler(seed=seed)
+
     study = optuna.create_study(
         study_name="ProdSLDA",
         directions=["maximize" for _ in train_targets],
         pruner=optuna.pruners.HyperbandPruner(),
-        sampler=optuna.samplers.TPESampler(seed=seed),
+        sampler=sampler,
         storage="sqlite:///prodslda.db",
         load_if_exists=True,
     )
@@ -667,9 +681,15 @@ def run_optuna_study(
 
     pyro.set_rng_seed(seed)
 
-    study.optimize(objective, n_trials=n_trials)
+    try:
+        study.optimize(objective, n_trials=n_trials)
+    except (KeyboardInterrupt, RuntimeError):
+        pass
+    finally:
+        with open(".prodslda_sampler.pkl", "wb+") as f:
+            pickle.dump(study.sampler, f)
 
-    pprint(study.best_trial)
+    pprint(study.best_trials)
 
     fig = optuna.visualization.plot_param_importances(study)
     fig.show()
@@ -684,6 +704,7 @@ def run_optuna_study_cli():
     )
     parser.add_argument("--num-trials", type=int, default=25)
     parser.add_argument("-n", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--verbose", action="store_true")
 
     args = parser.parse_args()
@@ -696,4 +717,5 @@ def run_optuna_study_cli():
         train_data_len=args.n,
         device=device,
         verbose=args.verbose,
+        seed=args.seed,
     )
