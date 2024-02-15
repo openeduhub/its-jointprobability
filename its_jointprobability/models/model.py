@@ -441,6 +441,7 @@ def eval_model(
         data_loader=sequential_data_loader(
             data,
             device=model.device,
+            batch_size=1000,
             dtype=torch.float,
         ),
         return_sites=list(eval_sites.values()),
