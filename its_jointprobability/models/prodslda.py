@@ -693,7 +693,7 @@ def run_optuna_study(
 
     study.optimize(objective, n_trials=n_trials)
 
-    print(f"{study.best_trial=}")
+    print(f"{study.best_trials=}")
 
     fig = optuna.visualization.plot_param_importances(study)
     fig.show()
