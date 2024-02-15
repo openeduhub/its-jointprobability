@@ -117,7 +117,7 @@ class Simple_Model:
         svi = pyro.infer.SVI(self.model, self.guide, optim, elbo)
 
         # progress bar / iterator over epochs
-        epochs = trange(max_epochs, desc="svi steps", miniters=10)
+        epochs = trange(max_epochs, desc="svi steps")
         for epoch in epochs:
             batch_losses = list()
             for last_batch_in_epoch, train_args in data_loader:
