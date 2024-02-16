@@ -7,6 +7,7 @@ from typing import NamedTuple, Optional
 from pprint import pprint
 
 import pickle
+from data_utils.default_pipelines.data import subset_data_points
 import numpy as np
 import optuna
 import pyro
@@ -489,6 +490,11 @@ def retrain_model_cli():
         help="The maximum number of training documents",
     )
     parser.add_argument(
+        "--only-confirmed",
+        action="store_true",
+        help="Whether to only include editorially confirmed materials for training.",
+    )
+    parser.add_argument(
         "--skip-cache",
         action="store_true",
         help="Whether to skip the cached train / test data, effectively forcing a re-generation.",
@@ -512,6 +518,10 @@ def retrain_model_cli():
         print("Processed data not found. Generating it...")
         data = make_data(path, always_include_confirmed=True, max_len=args.max_len)
         save_data(path, data)
+
+    if args.only_confirmed:
+        train_data = subset_data_points(data.train, np.where(data.train.editor_arr)[0])
+        data = Split_Data(train_data, data.test)
 
     train_docs, train_targets, test_docs, test_targets = set_up_data(data)
 
