@@ -7,7 +7,7 @@ from typing import NamedTuple, Optional
 from pprint import pprint
 
 import pickle
-from data_utils.default_pipelines.data import subset_data_points
+from data_utils.default_pipelines.data import BoW_Data, subset_data_points
 import numpy as np
 import optuna
 import pyro
@@ -352,37 +352,20 @@ class Torch_Data(NamedTuple):
 
 
 def set_up_data(data: Split_Data) -> Torch_Data:
-    train_data = data.train
-    test_data = data.test
+    def to_tensor(data: BoW_Data) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        # use the from_numpy function, as this way, the two share memory
+        docs: torch.Tensor = torch.from_numpy(data.bows)
+        targets = {
+            key: torch.from_numpy(value.arr) for key, value in data.target_data.items()
+        }
 
-    # use the from_numpy function, as this way, the two share memory
-    train_docs: torch.Tensor = torch.from_numpy(train_data.bows)
-    train_targets: dict[str, torch.Tensor] = {
-        key: torch.from_numpy(value.arr)
-        for key, value in train_data.target_data.items()
-    }
+        ic(docs.shape)
+        ic({field: target.shape for field, target in targets.items()})
+        ic({field: train_target.sum(-2) for field, train_target in targets.items()})
 
-    ic(train_docs.shape)
-    ic({field: train_target.shape for field, train_target in train_targets.items()})
-    ic({field: train_target.sum(-2) for field, train_target in train_targets.items()})
+        return docs, targets
 
-    test_docs: torch.Tensor = torch.from_numpy(test_data.bows)
-    test_targets: dict[str, torch.Tensor] = {
-        key: torch.from_numpy(value.arr)
-        for key, value in test_data.target_data.items()
-        if key == Fields.TAXONID.value
-    }
-
-    ic(test_docs.shape)
-    ic({field: test_target.shape for field, test_target in test_targets.items()})
-    ic({field: test_target.sum(-2) for field, test_target in test_targets.items()})
-
-    return Torch_Data(
-        train_docs=train_docs,
-        train_targets=train_targets,
-        test_docs=test_docs,
-        test_targets=test_targets,
-    )
+    return Torch_Data(*to_tensor(data.train), *to_tensor(data.test))
 
 
 def train_model(
