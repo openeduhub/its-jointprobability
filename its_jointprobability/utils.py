@@ -1,6 +1,6 @@
 import math
 import random
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import reduce
 from typing import Optional, TypeVar
 
@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from nlprep import Collection, tokenize_documents
+from nlprep import Collection, partial, tokenize_documents
 from pydantic import BaseModel
 
 T = TypeVar("T")
@@ -85,25 +85,6 @@ def texts_to_bow_tensor(
     return F.one_hot(docs_as_tensor, num_classes=len(tokens)).sum(-2).float()
 
 
-# def labels_to_tensor(
-#     *labels_col: Iterable[T],
-#     label_values: Sequence[T],
-#     device: Optional[torch.device] = None,
-# ) -> torch.Tensor:
-#     """Transform the given labels to a Boolean tensor."""
-#     labels_indexes = [
-#         torch.tensor([label_values.index(label) for label in labels], device=device)
-#         for labels in labels_col
-#     ]
-
-#     return torch.stack(
-#         [
-#             F.one_hot(labels, num_classes=len(label_values)).sum(-2).float()
-#             for labels in labels_indexes
-#         ]
-#     )
-
-
 Batch_Strategy = Iterator[tuple[bool, list[int]]]
 
 
@@ -149,82 +130,97 @@ def get_random_batch_strategy(length: int, batch_size: Optional[int]) -> Batch_S
             yield last_batch_in_epoch, results
 
 
+#: A batch is a sequence of individual data (Tensor) or missing data (None)
+Batch = Sequence[torch.Tensor | None]
+
 #: A data loader is an (infinite) iterator that yields a the following:
 #:
 #: 1. An indicator whether this is the the last batch of the epoch.
 #: 2. The batched data itself.
-Data_Loader = Iterator[tuple[bool, Sequence[torch.Tensor]]]
+Data_Loader = Iterator[tuple[bool, Batch]]
+
+
+def get_batch_size(batch: Batch) -> int:
+    return max(len(batch_item) if batch_item is not None else 0 for batch_item in batch)
 
 
 def _abstract_data_loader(
-    *tensors: torch.Tensor,
+    *tensors: torch.Tensor | None,
     batch_strategy: Batch_Strategy,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype | Collection[torch.dtype]] = None,
 ) -> Data_Loader:
     for last_batch_in_epoch, batch in batch_strategy:
-        batched_data = [tensor[batch].to(device) for tensor in tensors]
+        batched_data = [
+            tensor[batch].to(device) if tensor is not None else None
+            for tensor in tensors
+        ]
         if dtype is not None:
             if isinstance(dtype, Iterable):
                 batched_data = [
-                    batch.type(dtype_entry)
+                    batch.type(dtype_entry) if batch is not None else None
                     for batch, dtype_entry in zip(batched_data, dtype)
                 ]
             else:
-                batched_data = [batch.type(dtype) for batch in batched_data]
+                batched_data = [
+                    batch.type(dtype) if batch is not None else None
+                    for batch in batched_data
+                ]
 
         yield last_batch_in_epoch, batched_data
 
 
-def default_data_loader(
-    *tensors: torch.Tensor,
+def _empty_data_loader(*tensors) -> Data_Loader:
+    while True:
+        yield True, [None for _ in tensors]
+
+
+def _data_loader_from_strategy(
+    get_batch_strategy: Callable[[int, int], Batch_Strategy],
+    *tensors: torch.Tensor | None,
     batch_size: Optional[int] = None,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype | Collection[torch.dtype]] = None,
 ) -> Data_Loader:
-    """
-    Converts the given data into an infinite sequence of random batches.
+    n = None
+    for tensor in tensors:
+        if tensor is None:
+            continue
+        if n is None:
+            n = len(tensor)
+        assert n == len(tensor)
 
-    :param batch_size: If given, create batches of this size.
-        Note that the final batch of each epoch may be smaller, in order to
-        ensure that no data is visited twice per epoch.
-    :param device: If given, move each batch to this device.
-        This is useful when dealing with particularly large data sets that do
-        not fully fit e.g. onto a GPU.
-    :param dtype: If given, convert each batch to this data type.
-        If this is a singular value, convert all data to this type.
-        If this is a collection, convert the batch of the nth data tensor
-        to the nth dtype in the sequence.
-    """
-    n = len(tensors[0])
+    if n is None:
+        return _empty_data_loader(*tensors)
+
     if batch_size is None:
         batch_size = _default_batch_size(n)
 
-    batch_strategy = get_random_batch_strategy(n, batch_size)
+    batch_strategy = get_batch_strategy(n, batch_size)
 
     return _abstract_data_loader(
         *tensors, batch_strategy=batch_strategy, device=device, dtype=dtype
     )
 
 
-def sequential_data_loader(
-    *tensors: torch.Tensor,
-    batch_size: Optional[int] = None,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype | Collection[torch.dtype]] = None,
-) -> Data_Loader:
-    """
-    Like the default data loader, but sequentially batches the data.
-    """
-    n = len(tensors[0])
-    if batch_size is None:
-        batch_size = _default_batch_size(n)
+#: Converts the given data into an infinite sequence of random batches.
+#:
+#: :param batch_size: If given, create batches of this size.
+#:     Note that the final batch of each epoch may be smaller, in order to
+#:     ensure that no data is visited twice per epoch.
+#: :param device: If given, move each batch to this device.
+#:     This is useful when dealing with particularly large data sets that do
+#:     not fully fit e.g. onto a GPU.
+#: :param dtype: If given, convert each batch to this data type.
+#:     If this is a singular value, convert all data to this type.
+#:     If this is a collection, convert the batch of the nth data tensor
+#:     to the nth dtype in the sequence.
+default_data_loader = partial(_data_loader_from_strategy, get_random_batch_strategy)
 
-    batch_strategy = get_sequential_batch_strategy(n, batch_size)
-
-    return _abstract_data_loader(
-        *tensors, batch_strategy=batch_strategy, device=device, dtype=dtype
-    )
+#: Like the default data loader, but sequentially batches the data.
+sequential_data_loader = partial(
+    _data_loader_from_strategy, get_sequential_batch_strategy
+)
 
 
 def _default_batch_size(n: int, num_options: int = 5) -> int:
