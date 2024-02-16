@@ -468,7 +468,7 @@ def eval_model(
         by_discipline = quality_measures(
             samples,
             target.to(model.device).float(),
-            mean_dim=-3,
+            mean_dim=0,
             cutoff=global_measures.cutoff,
             parallel_dim=-1,
         )
