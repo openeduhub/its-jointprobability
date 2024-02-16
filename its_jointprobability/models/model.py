@@ -15,9 +15,11 @@ import torch
 import torch.nn.functional as F
 from icecream import ic
 from its_jointprobability.utils import (
+    Batch,
     Data_Loader,
     Quality_Result,
     batch_to_list,
+    get_batch_size,
     quality_measures,
     sequential_data_loader,
     texts_to_bow_tensor,
@@ -99,7 +101,11 @@ class Simple_Model:
         # and correct the learning rate decay
         one_epoch = batch_to_list(data_loader)
         batches_per_epoch = len(one_epoch)
-        n = sum(len(batch[0]) for batch in one_epoch)
+        n = 0
+        for batch in one_epoch:
+            n += get_batch_size(batch)
+
+        assert n > 0
 
         # set the per-step learning rate decay such that after 100 epochs,
         # we have multiplied the learning rate with gamma
@@ -120,9 +126,10 @@ class Simple_Model:
         epochs = trange(max_epochs, desc="svi steps")
         for epoch in epochs:
             batch_losses = list()
-            for last_batch_in_epoch, train_args in data_loader:
-                with pyro.poutine.scale(scale=n / len(train_args[0])):
-                    batch_losses.append(svi.step(*train_args))
+            for last_batch_in_epoch, batch in data_loader:
+                batch_size = get_batch_size(batch)
+                with pyro.poutine.scale(scale=n / batch_size):
+                    batch_losses.append(svi.step(*batch))
                 # break if this was the last batch
                 if last_batch_in_epoch:
                     break
@@ -182,9 +189,7 @@ class Simple_Model:
         # draw from the posterior in batches
         batches = batch_to_list(data_loader)
         if progress_bar:
-            bar: Iterable[Sequence[torch.Tensor]] = tqdm(
-                batches, desc="posterior sample"
-            )
+            bar = tqdm(batches, desc="posterior sample")
         else:
             bar = batches
 
@@ -418,7 +423,7 @@ Post_Sample_Fun = Callable[[torch.Tensor], torch.Tensor]
 
 def eval_model(
     model: Simple_Model,
-    data: torch.Tensor,
+    *data: torch.Tensor | None,
     targets: torch.Tensor | dict[str, torch.Tensor],
     target_values: Iterable | dict[str, Iterable],
     eval_sites: str | dict[str, str],
@@ -439,7 +444,7 @@ def eval_model(
 
     samples_by_key = model.draw_posterior_samples(
         data_loader=sequential_data_loader(
-            data,
+            *data,
             device=model.device,
             batch_size=1000,
             dtype=torch.float,
