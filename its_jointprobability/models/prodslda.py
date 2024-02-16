@@ -25,8 +25,14 @@ from its_jointprobability.data import (
     save_data,
     save_model,
 )
-from its_jointprobability.models.model import Model, eval_model, set_up_optuna_study
+from its_jointprobability.models.model import (
+    Model,
+    Simple_Model,
+    eval_model,
+    set_up_optuna_study,
+)
 from its_jointprobability.utils import Data_Loader, default_data_loader
+from data_utils.defaults import Fields
 
 
 class ProdSLDA(Model):
@@ -39,38 +45,47 @@ class ProdSLDA(Model):
         vocab: Sequence[str],
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
-        num_topics: int,
+        num_topics: int = 128,
         cov_rank: Optional[int] = None,
-        hid_size: int = 100,
+        hid_size: int = 224,
         hid_num: int = 1,
         dropout: float = 0.2,
-        nu_loc: float = 0.0,
+        nu_loc: float = -2.0,
         nu_scale: float = 10.0,
-        target_scale: float = 1.0,
+        # target_scale: float = 10.0,
         use_batch_normalization: bool = True,
         correlated_nus: bool = False,
-        bias_from_previous_targets: bool = True,
+        optimize_priors: bool = True,
         device: Optional[torch.device] = None,
     ):
+        # save the given arguments so that they can be exported later
+        self.args = locals().copy()
+        del self.args["self"]
+        del self.args["device"]
+
+        # dynamically set the return sites
         vocab_size = len(vocab)
         target_sizes = [len(id_label_dict) for id_label_dict in id_label_dicts]
-
         ns = list(range(len(target_sizes)))
 
         self.return_sites = tuple(
-            [f"target_{i}" for i in ns]
-            + [f"probs_{i}" for i in ns]
-            + [f"sigma_{i}" for i in ns[1:]]
-            + ["nu", "a"]
+            [f"target_{i}" for i in ns] + [f"probs_{i}" for i in ns] + ["nu", "a"]
         )
         self.return_site_cat_dim = (
             {f"target_{i}": -2 for i in ns}
             | {f"probs_{i}": -2 for i in ns}
-            | {f"sigma_{i}": -4 for i in ns[1:]}
             | {"nu": -4, "a": -2}
         )
 
         super().__init__()
+
+        # because we tend to have significantly more words and topics than
+        # target categories, the former can dominate the latter during SVI.
+        # to combat this, we scale the loss function for the targets accordingly.
+        self.target_scale = max(
+            1.0, np.log(vocab_size * num_topics / sum(target_sizes))
+        )
+
         self.vocab = vocab
         self.vocab_size = vocab_size
         self.id_label_dicts = id_label_dicts
@@ -87,28 +102,10 @@ class ProdSLDA(Model):
         self.dropout = dropout
         self.nu_loc = float(nu_loc)
         self.nu_scale = float(nu_scale)
-        self.target_scale = target_scale
         self.use_batch_normalization = use_batch_normalization
         self.correlated_nus = correlated_nus
-        self.bias_from_previous_targets = bias_from_previous_targets
+        self.optimize_priors = optimize_priors
         self.device = device
-
-        self.args = {
-            "vocab": self.vocab,
-            "id_label_dicts": self.id_label_dicts,
-            "target_names": self.target_names,
-            "num_topics": self.num_topics,
-            "cov_rank": self.cov_rank,
-            "hid_size": self.hid_size,
-            "hid_num": self.hid_num,
-            "dropout": self.dropout,
-            "nu_loc": self.nu_loc,
-            "nu_scale": self.nu_scale,
-            "target_scale": self.target_scale,
-            "use_batch_normalization": self.use_batch_normalization,
-            "correlated_nus": self.correlated_nus,
-            "bias_from_previous_targets": self.bias_from_previous_targets,
-        }
 
         self.decoder = nn.Sequential(
             nn.Dropout(dropout),
@@ -141,8 +138,8 @@ class ProdSLDA(Model):
     def model(
         self,
         docs: torch.Tensor,
-        *targets: torch.Tensor,
-        obs_masks: Optional[Sequence[torch.Tensor]] = None,
+        *targets: torch.Tensor | None,
+        obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
     ):
         n = sum(self.target_sizes)
         # if no observations mask has been given, ignore any docs that
@@ -154,33 +151,38 @@ class ProdSLDA(Model):
         docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
 
         # the matrix mapping the relationship between latent topic and targets
-        nu = pyro.sample(
-            "nu",
-            dist.Normal(
-                torch.tensor(self.nu_loc, device=docs.device),
-                torch.tensor(self.nu_scale, device=docs.device),
-            )
-            .expand(torch.Size([self.num_topics, n]))
-            .to_event(2),
+        nu_loc_fun = lambda: self.nu_loc * docs.new_ones([self.num_topics, n])
+        nu_scale_fun = lambda: self.nu_scale * docs.new_ones([self.num_topics, n])
+        nu_loc = (
+            pyro.param("nu_loc", nu_loc_fun) if self.optimize_priors else nu_loc_fun()
         )
+        nu_scale = (
+            pyro.param("nu_scale", nu_scale_fun, constraint=dist.constraints.positive)
+            if self.optimize_priors
+            else nu_scale_fun()
+        )
+
+        nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
         ic(nu.shape)
 
-        # the influence of the previous targets on subsequent ones
-        if self.bias_from_previous_targets:
-            sigmas: list[torch.Tensor] = [torch.tensor([])]
-            for i, (cum_size, cur_size) in enumerate(
-                zip(np.cumsum(self.target_sizes), self.target_sizes[1:])
-            ):
-                sigma = pyro.sample(
-                    f"sigma_{i+1}",
-                    dist.Normal(docs.new_zeros([cum_size, cur_size]), 1).to_event(2),
-                )
-                ic(sigma.shape)
-                sigmas.append(sigma)
-
         with docs_plate:
-            logtheta_loc = docs.new_zeros(self.num_topics)
-            logtheta_scale = docs.new_ones(self.num_topics)
+            logtheta_loc_fun = lambda: docs.new_zeros(self.num_topics)
+            logtheta_scale_fun = lambda: docs.new_ones(self.num_topics)
+            logtheta_loc = (
+                pyro.param("logtheta_loc", logtheta_loc_fun)
+                if self.optimize_priors
+                else logtheta_loc_fun()
+            )
+            logtheta_scale = (
+                pyro.param(
+                    "logtheta_scale",
+                    logtheta_scale_fun,
+                    constraint=dist.constraints.positive,
+                )
+                if self.optimize_priors
+                else logtheta_scale_fun()
+            )
+
             logtheta = pyro.sample(
                 "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
             )
@@ -212,42 +214,33 @@ class ProdSLDA(Model):
             )
             ic(a.shape)
 
-            a_split = a.split(self.target_sizes, -1)
+            probs_col = [
+                pyro.deterministic(f"probs_{i}", F.sigmoid(a_local))
+                for i, a_local in enumerate(a.split(self.target_sizes, -1))
+            ]
 
-            prev_targets: list[torch.Tensor] = list()
             with pyro.poutine.scale(scale=self.target_scale):
-                for i in range(len(self.target_sizes)):
-                    # the influence of previous target values on the current one
-                    if self.bias_from_previous_targets and i > 0:
-                        prev_targets_tensor = torch.concat(prev_targets, dim=-1)
-                        prev_targets_effect = torch.matmul(
-                            prev_targets_tensor,
-                            sigmas[i],  # type: ignore
-                        )
-                        ic(prev_targets_effect.shape)
-                    else:
-                        prev_targets_effect = torch.tensor(0)
-
-                    probs = pyro.deterministic(
-                        f"probs_{i}", F.sigmoid(a_split[i] + prev_targets_effect)
-                    )
+                for i, probs in enumerate(probs_col):
                     ic(probs.shape)
-
-                    target = pyro.sample(
-                        f"target_{i}",
-                        dist.Bernoulli(probs).to_event(1),  # type: ignore
-                        obs=targets[i] if len(targets) > i else None,
-                        obs_mask=obs_masks[i] if len(obs_masks) > i else None,
-                    )
-                    ic(target.shape)
-
-                    prev_targets.append(target)
+                    with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
+                        targets_i = targets[i] if len(targets) > i else None
+                        obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
+                        target = pyro.sample(
+                            f"target_{i}",
+                            dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
+                            obs=targets_i.swapaxes(-1, -2)
+                            if targets_i is not None
+                            else None,
+                            obs_mask=obs_masks_i,
+                            infer={"enumerate": "parallel"},
+                        ).swapaxes(-1, -2)
+                        ic(target.shape)
 
     def guide(
         self,
         docs: torch.Tensor,
-        *targets: torch.Tensor,
-        obs_masks: Optional[Sequence[torch.Tensor]] = None,
+        *targets: torch.Tensor | None,
+        obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
     ):
         n = sum(self.target_sizes)
         if obs_masks is None:
@@ -287,25 +280,6 @@ class ProdSLDA(Model):
 
         ic(nu_q.shape)
 
-        if self.bias_from_previous_targets:
-            sigma_qs: list[torch.Tensor] = [torch.tensor([])]
-            for i, (cum_size, cur_size) in enumerate(
-                zip(np.cumsum(self.target_sizes), self.target_sizes[1:])
-            ):
-                sigma_loc = pyro.param(
-                    f"sigma_{i+1}_loc", docs.new_zeros([cum_size, cur_size])
-                )
-                sigma_scale = pyro.param(
-                    f"sigma_{i+1}_scale",
-                    docs.new_ones([cum_size, cur_size]),
-                    constraint=dist.constraints.positive,
-                )
-                sigma_q = pyro.sample(
-                    f"sigma_{i+1}", dist.Normal(sigma_loc, sigma_scale).to_event(2)
-                )
-                ic(sigma_q.shape)
-                sigma_qs.append(sigma_q)
-
         with docs_plate:
             logtheta_q = pyro.sample(
                 "logtheta", dist.Normal(*self.logtheta_params(docs)).to_event(1)
@@ -324,28 +298,20 @@ class ProdSLDA(Model):
             )
             ic(a_q.shape)
 
-            a_q_split = a_q.split(self.target_sizes, -1)
+            probs_col = [
+                F.sigmoid(a_local)
+                for i, a_local in enumerate(a_q.split(self.target_sizes, -1))
+            ]
 
-            prev_targets: list[torch.Tensor] = list()
             with pyro.poutine.scale(scale=self.target_scale):
                 for i in range(len(self.target_sizes)):
-                    # the influence of previous target values on the current one
-                    if self.bias_from_previous_targets and i > 0:
-                        prev_targets_tensor = torch.concat(prev_targets, dim=-1)
-                        prev_targets_effect = torch.matmul(
-                            prev_targets_tensor,
-                            sigma_qs[i],  # type: ignore
-                        )
-                    else:
-                        prev_targets_effect = torch.tensor(0)
-
-                    probs = F.sigmoid(a_q_split[i] + prev_targets_effect)
-
-                    target_q = pyro.sample(
-                        f"target_{i}_unobserved",
-                        dist.Bernoulli(probs).to_event(1),  # type: ignore
-                    )
-                    prev_targets.append(target_q)
+                    probs = probs_col[i]
+                    with pyro.plate(f"target_{i}_plate"):
+                        target_q = pyro.sample(
+                            f"target_{i}_unobserved",
+                            dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
+                            infer={"enumerate": "parallel"},
+                        ).swapaxes(-1, -2)
 
     def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pyro.module("encoder", self.encoder, update_module_params=True)
@@ -372,40 +338,46 @@ class ProdSLDA(Model):
 
         return posterior_samples
 
-    def _get_obs_mask(self, *targets: torch.Tensor) -> list[torch.Tensor]:
-        return [target.sum(-1) > 0 for target in targets]
+    def _get_obs_mask(self, *targets: torch.Tensor | None) -> list[torch.Tensor | None]:
+        return [
+            target.sum(-1) > 0 if target is not None else None for target in targets
+        ]
 
 
-class Data(NamedTuple):
+class Torch_Data(NamedTuple):
     train_docs: torch.Tensor
     train_targets: dict[str, torch.Tensor]
     test_docs: torch.Tensor
     test_targets: dict[str, torch.Tensor]
 
 
-def set_up_data(data: Split_Data) -> Data:
+def set_up_data(data: Split_Data) -> Torch_Data:
     train_data = data.train
     test_data = data.test
 
-    train_docs: torch.Tensor = torch.tensor(train_data.bows)
+    # use the from_numpy function, as this way, the two share memory
+    train_docs: torch.Tensor = torch.from_numpy(train_data.bows)
     train_targets: dict[str, torch.Tensor] = {
-        key: torch.tensor(value.arr) for key, value in train_data.target_data.items()
+        key: torch.from_numpy(value.arr)
+        for key, value in train_data.target_data.items()
     }
 
     ic(train_docs.shape)
     ic({field: train_target.shape for field, train_target in train_targets.items()})
     ic({field: train_target.sum(-2) for field, train_target in train_targets.items()})
 
-    test_docs: torch.Tensor = torch.tensor(test_data.bows)
+    test_docs: torch.Tensor = torch.from_numpy(test_data.bows)
     test_targets: dict[str, torch.Tensor] = {
-        key: torch.tensor(value.arr) for key, value in test_data.target_data.items()
+        key: torch.from_numpy(value.arr)
+        for key, value in test_data.target_data.items()
+        if key == Fields.TAXONID.value
     }
 
     ic(test_docs.shape)
     ic({field: test_target.shape for field, test_target in test_targets.items()})
     ic({field: test_target.sum(-2) for field, test_target in test_targets.items()})
 
-    return Data(
+    return Torch_Data(
         train_docs=train_docs,
         train_targets=train_targets,
         test_docs=test_docs,
@@ -418,19 +390,13 @@ def train_model(
     vocab: Sequence[str],
     id_label_dicts: Collection[dict[str, str]],
     target_names: Collection[str],
-    num_topics: int = 64,
-    hid_size: int = 128,
-    hid_num: int = 2,
-    dropout: float = 0.2,
-    nu_loc: float = -2.0,
-    nu_scale: float = 10.0,
     min_epochs: int = 10,
     max_epochs: int = 100,
-    target_scale: float = 1.0,
-    initial_lr: float = 0.05,
+    initial_lr: float = 0.06,
     gamma: float = 0.75,
     seed: int = 0,
     device: Optional[torch.device] = None,
+    **kwargs,
 ) -> ProdSLDA:
     pyro.set_rng_seed(seed)
 
@@ -438,20 +404,15 @@ def train_model(
         vocab=vocab,
         id_label_dicts=id_label_dicts,
         target_names=target_names,
-        num_topics=num_topics,
-        hid_size=hid_size,
-        hid_num=hid_num,
-        dropout=dropout,
-        nu_loc=nu_loc,
-        nu_scale=nu_scale,
-        target_scale=target_scale,
         device=device,
+        **kwargs,
     )
 
     prodslda.run_svi(
         data_loader=data_loader,
-        elbo=pyro.infer.TraceGraph_ELBO(
+        elbo=pyro.infer.TraceEnum_ELBO(
             num_particles=3,
+            max_plate_nesting=2,
             vectorize_particles=False,
         ),
         min_epochs=min_epochs,
@@ -552,30 +513,55 @@ def retrain_model_cli():
         max_epochs=args.max_epochs,
     )
 
-    save_model(prodslda, path)
-
-    titles = {key: data.train.target_data[key].labels for key in train_targets.keys()}
+    save_model(prodslda, path, "_".join(train_targets.keys()))
     eval_sites = {key: f"probs_{i}" for i, key in enumerate(train_targets.keys())}
 
+    run_evaluation(prodslda, data, eval_sites)
+
+
+def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, str]):
+    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
+    titles = {key: value.labels for key, value in data.train.target_data.items()}
+
     # evaluate the newly trained model
+    print()
+    print("------------------------------")
     print("evaluating model on train data")
     eval_model(
-        model=prodslda,
-        data=train_docs,
+        model,
+        train_docs,
         targets=train_targets,
         target_values=titles,
         eval_sites=eval_sites,
     )
 
     if len(test_docs) > 0:
+        print()
+        print("-----------------------------")
         print("evaluating model on test data")
         eval_model(
-            model=prodslda,
-            data=test_docs,
+            model,
+            test_docs,
             targets=test_targets,
             target_values=titles,
             eval_sites=eval_sites,
         )
+
+        print()
+        print("-----------------------------------------------------------")
+        print("evaluating model on test data, providing all other metadata")
+        for index, key in enumerate(titles.keys()):
+            targets_without_current = [test_docs] + [
+                targets if i != index else None
+                for i, targets in enumerate(test_targets.values())
+            ]
+            eval_model(
+                model,
+                *targets_without_current,
+                targets={key: test_targets[key]},
+                target_values={key: titles[key]},
+                eval_sites={key: eval_sites[key]},
+            )
 
 
 def run_optuna_study(
@@ -612,7 +598,7 @@ def run_optuna_study(
                 num_samples=100,
                 mean_dim=0,
                 cutoff=None,
-            ).f1_score
+            ).accuracy
             assert isinstance(val, float)
             return val
 
@@ -625,9 +611,9 @@ def run_optuna_study(
             *train_targets.values(),
             device=device,
             dtype=torch.float,
-            batch_size=3500,
+            batch_size=4000,
         ),
-        elbo_choices={"TraceGraph": pyro.infer.TraceGraph_ELBO},
+        elbo_choices={"TraceGraph": pyro.infer.TraceEnum_ELBO},
         eval_funs_final=[
             get_eval_fun(i, test_docs, targets)
             for i, targets in enumerate(test_targets.values())
@@ -658,15 +644,15 @@ def run_optuna_study(
             "num_topics": lambda trial: trial.suggest_int(
                 "num_topics", 50, 500, log=True
             ),
-            "bias_from_previous_targets": lambda trial: trial.suggest_categorical(
-                "bias_from_previous_targets", [True, False]
+            "optimize_priors": lambda trial: trial.suggest_categorical(
+                "optimize_priors", [True, False]
             ),
         },
         vectorize_particles=False,
         num_particles=lambda trial: 3,
         gamma=lambda trial: trial.suggest_float("gamma", 1e-3, 1.0, log=True),
         min_epochs=5,
-        max_epochs=lambda trial: 300,
+        max_epochs=lambda trial: 600,
         initial_lr=lambda trial: trial.suggest_float(
             "initial_lr", 1e-3, 1e-1, log=True
         ),
