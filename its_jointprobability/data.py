@@ -99,17 +99,21 @@ def load_data(path: Path) -> Split_Data:
 Model_Subtype = TypeVar("Model_Subtype", bound=Model)
 
 
-def save_model(model: Model, path: Path):
+def save_model(model: Model, path: Path, suffix: str = ""):
     cls_name = model.__class__.__name__
+    if suffix:
+        cls_name += f"_{suffix}"
     torch.save(model.args, path / f"{cls_name}_kwargs.pt")
     torch.save(model.state_dict(), path / f"{cls_name}_state.pt")
     pyro.get_param_store().save(path / f"{cls_name}_pyro.pt")
 
 
 def load_model(
-    model_class: type[Model_Subtype], path: Path, device: torch.device
+    model_class: type[Model_Subtype], path: Path, device: torch.device, suffix: str = ""
 ) -> Model_Subtype:
     cls_name = model_class.__name__
+    if suffix:
+        cls_name += f"_{suffix}"
     pyro.get_param_store().load(path / f"{cls_name}_pyro.pt", map_location=device)
 
     kwargs = torch.load(path / f"{cls_name}_kwargs.pt", map_location=device)
