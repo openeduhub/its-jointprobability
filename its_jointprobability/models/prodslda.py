@@ -433,9 +433,9 @@ def retrain_model_cli():
         help="The maximum number of training documents",
     )
     parser.add_argument(
-        "--only-confirmed",
+        "--include-unconfirmed",
         action="store_true",
-        help="Whether to only include editorially confirmed materials for training.",
+        help="Whether to also include materials that have not been confirmed editorially.",
     )
     parser.add_argument(
         "--skip-cache",
@@ -462,7 +462,7 @@ def retrain_model_cli():
         data = make_data(path, always_include_confirmed=True, max_len=args.max_len)
         save_data(path, data)
 
-    if args.only_confirmed:
+    if not args.include_unconfirmed:
         train_data = subset_data_points(data.train, np.where(data.train.editor_arr)[0])
         data = Split_Data(train_data, data.test)
 
