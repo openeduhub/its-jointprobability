@@ -45,14 +45,13 @@ class ProdSLDA(Model):
         vocab: Sequence[str],
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
-        num_topics: int = 128,
+        num_topics: int = 320,
         cov_rank: Optional[int] = None,
-        hid_size: int = 224,
+        hid_size: int = 350,
         hid_num: int = 1,
         dropout: float = 0.2,
-        nu_loc: float = -2.0,
-        nu_scale: float = 10.0,
-        # target_scale: float = 10.0,
+        nu_loc: float = -7.5,
+        nu_scale: float = 0.6,
         use_batch_normalization: bool = True,
         correlated_nus: bool = False,
         mle_priors: bool = False,
@@ -79,9 +78,9 @@ class ProdSLDA(Model):
 
         super().__init__()
 
-        # because we tend to have significantly more words and topics than
-        # target categories, the former can dominate the latter during SVI.
-        # to combat this, we scale the loss function for the targets accordingly.
+        # because we tend to have significantly more words than targets,
+        # the topic modeling part of the model can dominate the classification.
+        # to combat this, we scale the loss function of the latter accordingly.
         self.target_scale = max(
             1.0, np.log(vocab_size * num_topics / sum(target_sizes))
         )
@@ -372,9 +371,10 @@ def train_model(
     id_label_dicts: Collection[dict[str, str]],
     target_names: Collection[str],
     min_epochs: int = 10,
-    max_epochs: int = 100,
-    initial_lr: float = 0.06,
-    gamma: float = 0.75,
+    max_epochs: int = 500,
+    num_particles: int = 3,
+    initial_lr: float = 0.1,
+    gamma: float = 0.2,
     seed: int = 0,
     device: Optional[torch.device] = None,
     **kwargs,
@@ -392,12 +392,12 @@ def train_model(
     prodslda.run_svi(
         data_loader=data_loader,
         elbo=pyro.infer.TraceEnum_ELBO(
-            num_particles=3,
+            num_particles=num_particles,
             max_plate_nesting=2,
             vectorize_particles=False,
         ),
         min_epochs=min_epochs,
-        max_epochs=max_epochs,
+        max_epochs=max_epochs // num_particles,
         initial_lr=initial_lr,
         gamma=gamma,
     )
@@ -422,7 +422,7 @@ def retrain_model_cli():
     parser.add_argument(
         "--max-epochs",
         type=int,
-        default=250,
+        default=500,
         help="The maximum number of training epochs per batch of data",
     )
     parser.add_argument(
@@ -612,46 +612,54 @@ def run_optuna_study(
                 for field in train_targets.keys()
             ],
             "target_names": list(train_targets.keys()),
-            "use_batch_normalization": True,
+            # defaults; overridden if also present in the variable kwargs
+            "hid_size": 350,
+            "hid_num": 1,
+            "num_topics": 320,
             "dropout": 0.2,
-            "target_scale": 1,
             "nu_loc": -2,
-            "nu_scale": 10,
+            "nu_scale": 5,
+            "use_batch_normalization": True,
+            "mle_priors": False,
             "correlated_nus": False,
         },
         var_model_kwargs={
-            "hid_size": lambda trial: trial.suggest_int("hid_size", 50, 500, log=True),
+            "hid_size": lambda trial: trial.suggest_int("hid_size", 50, 500),
             "hid_num": lambda trial: trial.suggest_int("hid_num", 1, 3),
-            "num_topics": lambda trial: trial.suggest_int(
-                "num_topics", 50, 500, log=True
-            ),
-            "optimize_priors": lambda trial: trial.suggest_categorical(
-                "optimize_priors", [True, False]
-            ),
+            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500),
+            "dropout": lambda trial: trial.suggest_float("dropout", 0.0, 0.9),
+            "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10.0, 0.0),
+            "nu_scale": lambda trial: trial.suggest_float("nu_scale", 0.1, 3, log=True),
+            # "mle_priors": lambda trial: trial.suggest_categorical(
+            #     "mle_priors", [True, False]
+            # ),
+            # "correlated_nus": lambda trial: trial.suggest_categorical(
+            #     "correlated_nus", [True, False]
+            # ),
         },
         vectorize_particles=False,
-        num_particles=lambda trial: 3,
-        gamma=lambda trial: trial.suggest_float("gamma", 1e-3, 1.0, log=True),
+        num_particles=lambda trial: trial.suggest_int("num_particles", 1, 7),
+        gamma=lambda trial: trial.suggest_float("gamma", 0.1, 1.0, log=True),
         min_epochs=5,
-        max_epochs=lambda trial: 600,
-        initial_lr=lambda trial: trial.suggest_float(
-            "initial_lr", 1e-3, 1e-1, log=True
-        ),
+        max_epochs=lambda trial: 500,
+        initial_lr=lambda trial: trial.suggest_float("initial_lr", 0.01, 1.0, log=True),
         device=device,
     )
 
+    NAME = "prodslda_all-f1"
+
     try:
-        with open(".prodslda_sampler.pkl", "rb") as f:
+        with open(f".{NAME}_sampler.pkl", "rb") as f:
             sampler = pickle.load(f)
     except FileNotFoundError:
         sampler = optuna.samplers.TPESampler(seed=seed)
 
     study = optuna.create_study(
-        study_name="ProdSLDA",
+        study_name=NAME,
         directions=["maximize" for _ in train_targets],
         pruner=optuna.pruners.HyperbandPruner(),
         sampler=sampler,
-        storage="sqlite:///prodslda.db",
+        storage=f"sqlite:///prodslda.db",
         load_if_exists=True,
     )
     study.set_user_attr("labeled_data_size", len(train_docs))
