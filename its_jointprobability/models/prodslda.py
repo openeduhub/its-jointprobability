@@ -61,6 +61,7 @@ class ProdSLDA(Model):
         self.args = locals().copy()
         del self.args["self"]
         del self.args["device"]
+        del self.args["__class__"]
 
         # dynamically set the return sites
         vocab_size = len(vocab)
