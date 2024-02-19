@@ -144,24 +144,25 @@ def main():
                 pass
 
             app.post(
-                "/predict_disciplines",
-                summary="Predict the disciplines belonging to the given text.",
+                "/predict",
+                summary="Predict the metadata fitting the given text.",
                 description="""
-                Note that all disciplines will be returned, sorted by their
-                median predicted probability of being relevant to the text.
+                Note that all categories are not filtered out. Instead, they
+                are sorted by their mean predicted probability of being
+                relevant to the text.
                 
                 Parameters
                 ----------
                 text : str
                     The text to be analyzed.
                 num_samples : int
-                    The number of samples to use in order to estimate the
-                    fit of each discipline.
-                    Higher numbers will result in less variance between calls,
-                    but take more time.
+                    The number of samples to use in order to estimate the fit
+                    of each discipline. Higher numbers will result in less
+                    variance between calls, but take more time.
                 num_predictions : int
                     The number of predicted disciplines (sorted by relevance)
-                    to return.
+                    to return. This does not affect performance; it simply
+                    serves as an initial filtering tool.
                 interval_size : float (0, 1]
                     The size of the credibility interval for the probability
                     that a discipline is assigned to the given text.
@@ -171,24 +172,26 @@ def main():
 
                 Returns
                 -------
-                disciplines : list of Discipline
-                    The list of disciplines, see below.
+                predictions : dict[str, list[Prediction]]
+                    Map from predicted metadatum to predictions for this
+                    metadatum.
                 version : str
                     The version of the prediction tool.
 
-                Discipline
+                Prediction
                 ----------
                 id : str
-                    The URI of the discipline.
+                    The URI of the category.
                 name : str
-                    The name of the discipline.
+                    The label of the category.
                 mean_prob : float [0, 1]
-                    The mean of the predicted probabilities that this discipline
+                    The mean of the predicted probabilities that this category
                     belongs to the given text.
                 median_prob : float [0, 1]
                     The median of the above probabilities.
                 prob_interval : 2-tuple of floats in [0, 1]
-                    The credibility interval of the predicted probabilities above.
+                    The credibility interval of the predicted probabilities
+                    above.
                 """,
             )(self.predict_disciplines)
 
