@@ -515,6 +515,7 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
         targets=train_targets,
         target_values=titles,
         eval_sites=eval_sites,
+        cutoffs=0.2,
     )
 
     if len(test_docs) > 0:
@@ -527,6 +528,7 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
             targets=test_targets,
             target_values=titles,
             eval_sites=eval_sites,
+            cutoffs=0.2,
         )
 
         print()
@@ -543,6 +545,7 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
                 targets={key: test_targets[key]},
                 target_values={key: titles[key]},
                 eval_sites={key: eval_sites[key]},
+                cutoffs=0.2,
             )
 
 
@@ -555,6 +558,10 @@ def run_optuna_study(
     verbose=False,
 ):
     data = load_data(path)
+    # only use editorially confirmed data for hyper-parameter tuning
+    data = Split_Data(
+        subset_data_points(data.train, np.where(data.train.editor_arr)[0]), data.test
+    )
     train_docs, train_targets, test_docs, test_targets = set_up_data(data)
 
     if train_data_len is not None:
@@ -577,10 +584,10 @@ def run_optuna_study(
                 docs,
                 targets=targets,
                 target_site=f"probs_{i}",
-                num_samples=100,
+                num_samples=250,
                 mean_dim=0,
-                cutoff=None,
-            ).accuracy
+                cutoff=0.2,
+            ).f1_score
             assert isinstance(val, float)
             return val
 
@@ -668,7 +675,7 @@ def run_optuna_study(
     pyro.set_rng_seed(seed)
 
     try:
-        study.optimize(objective, n_trials=n_trials)
+        study.optimize(objective, n_trials=n_trials, catch=RuntimeError)
     except (KeyboardInterrupt, RuntimeError):
         pass
     finally:
