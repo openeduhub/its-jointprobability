@@ -102,7 +102,7 @@ def main():
                 posterior_samples_by_field,
                 model.id_label_dicts,
             ):
-                probs = F.sigmoid(posterior_samples.squeeze(-2))
+                probs = F.sigmoid(posterior_samples.squeeze(-2).squeeze(-2))
                 mean_probs = probs.mean(0)
                 median_probs = probs.median(0)[0]
                 intervals: list[list[float]] = (
