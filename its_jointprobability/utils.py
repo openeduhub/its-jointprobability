@@ -13,6 +13,7 @@ from nlprep import Collection, partial, tokenize_documents
 from pydantic import BaseModel
 
 T = TypeVar("T")
+MAX_BATCH_SIZE = 3500
 
 
 def balanced_subset_mask(
@@ -223,8 +224,14 @@ sequential_data_loader = partial(
 )
 
 
-def _default_batch_size(n: int, num_options: int = 5) -> int:
-    center = np.ceil(n ** (2 / 3))
+def _default_batch_size(n: int, num_options: Optional[int] = None) -> int:
+    # if not otherwise specified, allow +/- 5%
+    num_options = num_options if num_options is not None else MAX_BATCH_SIZE // 20
+
+    # always use as large a batch as possible
+    center = min(n, MAX_BATCH_SIZE)
+
+    # choose the option that maximizes the size of the final batch
     options = np.arange(center - num_options, center + num_options + 1)
     options = options[options > 0]
     remainders = n % options
