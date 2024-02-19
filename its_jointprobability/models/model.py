@@ -427,6 +427,7 @@ def eval_model(
     targets: torch.Tensor | dict[str, torch.Tensor],
     target_values: Iterable | dict[str, Iterable],
     eval_sites: str | dict[str, str],
+    cutoffs: float | dict[str, float],
     post_sample_funs: Post_Sample_Fun | dict[str, Post_Sample_Fun] | None = None,
 ) -> dict[str, Quality_Result]:
     if not isinstance(targets, dict):
@@ -435,6 +436,8 @@ def eval_model(
         target_values = {key: target_values for key in targets.keys()}
     if not isinstance(eval_sites, dict):
         eval_sites = {key: eval_sites for key in targets.keys()}
+    if not isinstance(cutoffs, dict):
+        cutoffs = {key: cutoffs for key in targets.keys()}
     if not isinstance(post_sample_funs, dict):
         post_sample_funs = (
             {key: post_sample_funs for key in targets.keys()}
@@ -461,7 +464,7 @@ def eval_model(
         print("------------------------------")
         print(key)
         global_measures = quality_measures(
-            samples, target.to(model.device).float(), mean_dim=0, cutoff=None
+            samples, target.to(model.device).float(), mean_dim=0, cutoff=cutoffs[key]
         )
         print(f"global measures: {global_measures}")
 
