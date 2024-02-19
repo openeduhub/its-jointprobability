@@ -55,7 +55,7 @@ class ProdSLDA(Model):
         # target_scale: float = 10.0,
         use_batch_normalization: bool = True,
         correlated_nus: bool = False,
-        optimize_priors: bool = True,
+        mle_priors: bool = False,
         device: Optional[torch.device] = None,
     ):
         # save the given arguments so that they can be exported later
@@ -104,7 +104,7 @@ class ProdSLDA(Model):
         self.nu_scale = float(nu_scale)
         self.use_batch_normalization = use_batch_normalization
         self.correlated_nus = correlated_nus
-        self.optimize_priors = optimize_priors
+        self.mle_priors = mle_priors
         self.device = device
 
         self.decoder = nn.Sequential(
@@ -153,12 +153,10 @@ class ProdSLDA(Model):
         # the matrix mapping the relationship between latent topic and targets
         nu_loc_fun = lambda: self.nu_loc * docs.new_ones([self.num_topics, n])
         nu_scale_fun = lambda: self.nu_scale * docs.new_ones([self.num_topics, n])
-        nu_loc = (
-            pyro.param("nu_loc", nu_loc_fun) if self.optimize_priors else nu_loc_fun()
-        )
+        nu_loc = pyro.param("nu_loc", nu_loc_fun) if self.mle_priors else nu_loc_fun()
         nu_scale = (
             pyro.param("nu_scale", nu_scale_fun, constraint=dist.constraints.positive)
-            if self.optimize_priors
+            if self.mle_priors
             else nu_scale_fun()
         )
 
@@ -170,7 +168,7 @@ class ProdSLDA(Model):
             logtheta_scale_fun = lambda: docs.new_ones(self.num_topics)
             logtheta_loc = (
                 pyro.param("logtheta_loc", logtheta_loc_fun)
-                if self.optimize_priors
+                if self.mle_priors
                 else logtheta_loc_fun()
             )
             logtheta_scale = (
@@ -179,7 +177,7 @@ class ProdSLDA(Model):
                     logtheta_scale_fun,
                     constraint=dist.constraints.positive,
                 )
-                if self.optimize_priors
+                if self.mle_priors
                 else logtheta_scale_fun()
             )
 
