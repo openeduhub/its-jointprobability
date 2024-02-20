@@ -45,7 +45,7 @@ def main():
     # import the model and auxiliary data
     data_dir = Path.cwd() / "data"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(ProdSLDA, data_dir, device)
+    model = load_model(ProdSLDA, data_dir, device=device)
 
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
@@ -80,7 +80,7 @@ def main():
             self.model = model
             self.token_dict = token_dict
 
-        def predict_disciplines(self, inp: Prediction_Data) -> Prediction_Result:
+        def predict(self, inp: Prediction_Data) -> Prediction_Result:
             ic.disable()
             try:
                 posterior_samples_by_field = (
@@ -88,8 +88,10 @@ def main():
                         inp.text,
                         tokens=self.token_dict,
                         num_samples=inp.num_samples,
-                        return_sites=["a"],
-                    )["a"].split(self.model.target_sizes, -1)
+                        return_sites=[
+                            site for site in model.return_sites if "probs_" in site
+                        ],
+                    )
                 )
             except RuntimeError:
                 return Prediction_Result(predictions=dict())
@@ -99,10 +101,10 @@ def main():
             predictions = dict()
             for field, posterior_samples, id_label_dict in zip(
                 model.target_names,
-                posterior_samples_by_field,
+                posterior_samples_by_field.values(),
                 model.id_label_dicts,
             ):
-                probs = F.sigmoid(posterior_samples.squeeze(-2).squeeze(-2))
+                probs = posterior_samples.squeeze(-2).squeeze(-2)
                 mean_probs = probs.mean(0)
                 median_probs = probs.median(0)[0]
                 intervals: list[list[float]] = (
@@ -193,7 +195,7 @@ def main():
                     The credibility interval of the predicted probabilities
                     above.
                 """,
-            )(self.predict_disciplines)
+            )(self.predict)
 
             return app
 
