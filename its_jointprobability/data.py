@@ -31,6 +31,8 @@ def make_data(
             Fields.EDUCATIONAL_CONTEXT.value,
             Fields.INTENDED_ENDUSER.value,
             Fields.TAXONID.value,
+            Fields.TOPIC.value,
+            Fields.LRT.value,
         ],
         cache_dir=nlp_cache,
         **kwargs,
