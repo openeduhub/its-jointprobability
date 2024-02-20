@@ -1,7 +1,6 @@
-from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
-from typing import Any, NamedTuple, Optional, TypeVar
+from typing import NamedTuple, Optional, TypeVar
 
 import numpy as np
 import pyro
