@@ -40,7 +40,7 @@ def make_data(
     split_data = split_train_test(data)
 
     def get_train_data(x: Split_Data):
-        return torch.tensor(split_data.train.target_data[Fields.TAXONID.value].arr)
+        return torch.tensor(x.train.target_data[Fields.TAXONID.value].arr)
 
     # if the test data set is empty, create one from the training data
     # by randomly taking 5% of the editorially confirmed materials
