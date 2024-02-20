@@ -76,6 +76,7 @@ class Simple_Model:
         betas: tuple[float, float] = (0.90, 0.999),
         min_epochs: int = 100,
         max_epochs: int = 1000,
+        annealing_epochs: int = 100,
         min_rel_std: float = 1e-3,
         min_z_score: float = 1.0,
         metric_len: int = 5,
@@ -126,19 +127,21 @@ class Simple_Model:
         svi = pyro.infer.SVI(self.model, self.guide, optim, elbo)
 
         # get the list of annealing factors that shall be used during training
-        # at the end of training (i.e. for the last epoch), the annealing
-        # factor should equal 1.0
-        annealing_factors = torch.arange(max_epochs)
+        # at the end of annealing_epochs, factor should equal 1.0
+        annealing_epochs = min(annealing_epochs, max_epochs)
+        annealing_factors = torch.arange(1, annealing_epochs + 1)
         annealing_factors = (
-            self.annealing_factor * (1 - annealing_factors / max_epochs)
-            + 1.0 * annealing_factors / max_epochs
+            self.annealing_factor * (1 - annealing_factors / annealing_epochs)
+            + 1.0 * annealing_factors / annealing_epochs
         )
-        assert len(annealing_factors) == max_epochs
 
         # progress bar / iterator over epochs
         epochs = trange(max_epochs, desc="svi steps")
         for epoch in epochs:
-            self.annealing_factor = float(annealing_factors[epoch])
+            if epoch < annealing_epochs:
+                self.annealing_factor = float(annealing_factors[epoch])
+            else:
+                self.annealing_factor = 1.0
             batch_losses = list()
             for last_batch_in_epoch, batch in data_loader:
                 batch_size = get_batch_size(batch)
