@@ -1,6 +1,5 @@
 import argparse
 import math
-import operator as op
 import pickle
 from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
@@ -231,7 +230,7 @@ class ProdSLDA(Model):
                     with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
                         targets_i = targets[i] if len(targets) > i else None
                         obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
-                        target = pyro.sample(
+                        pyro.sample(
                             f"target_{i}",
                             dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
                             obs=targets_i.swapaxes(-1, -2)
@@ -306,13 +305,13 @@ class ProdSLDA(Model):
 
             probs_col = [
                 F.sigmoid(a_local)
-                for i, a_local in enumerate(a_q.split(self.target_sizes, -1))
+                for _, a_local in enumerate(a_q.split(self.target_sizes, -1))
             ]
 
             for i, probs in enumerate(probs_col):
                 with pyro.poutine.scale(scale=self.target_scale):
                     with pyro.plate(f"target_{i}_plate"):
-                        target_q = pyro.sample(
+                        pyro.sample(
                             f"target_{i}_unobserved",
                             dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
                             infer={"enumerate": "parallel"},
@@ -328,13 +327,8 @@ class ProdSLDA(Model):
     def clean_up_posterior_samples(
         self, posterior_samples: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
-        for i, _ in enumerate(self.target_sizes):
-            target = f"target_{i}"
-
-        a = "a"
-        nu = "nu"
-        if nu in posterior_samples:
-            posterior_samples[nu] = posterior_samples[nu].squeeze(-3)
+        if "nu" in posterior_samples:
+            posterior_samples["nu"] = posterior_samples["nu"].squeeze(-3)
 
         return posterior_samples
 
@@ -468,7 +462,7 @@ def retrain_model_cli():
         train_data = subset_data_points(data.train, np.where(data.train.editor_arr)[0])
         data = Split_Data(train_data, data.test)
 
-    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
+    train_docs, train_targets, _, _ = set_up_data(data)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_loader = default_data_loader(
@@ -604,7 +598,7 @@ def run_optuna_study(
                     mean_dim=0,
                     cutoff=None,
                 )
-            ).f1_score
+            ).f1_score  # type: ignore
             assert isinstance(val, float)
             return val
 
@@ -706,10 +700,10 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
                 "target_scale", 0.1, 100, log=True
             ),
         },
-        num_particles=lambda trial: 1,
-        gamma=lambda trial: 1.0,
-        initial_lr=lambda trial: 0.1,
-        max_epochs=lambda trial: 500,
+        num_particles=lambda _: 1,
+        gamma=lambda _: 1.0,
+        initial_lr=lambda _: 0.1,
+        max_epochs=lambda _: 500,
     ),
     "annealing_factor": lambda train_data, torch_data: Trial_Spec(
         name="prodslda_annealing-factor",
@@ -719,10 +713,10 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
                 "annealing_factor", 1e-4, 1.0, log=True
             ),
         },
-        num_particles=lambda trial: 1,
-        gamma=lambda trial: 0.5,
-        initial_lr=lambda trial: 0.1,
-        max_epochs=lambda trial: 500,
+        num_particles=lambda _: 1,
+        gamma=lambda _: 0.5,
+        initial_lr=lambda _: 0.1,
+        max_epochs=lambda _: 500,
     ),
     "priors": lambda train_data, torch_data: Trial_Spec(
         name="prodslda_priors",
@@ -734,10 +728,10 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
             "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10.0, 0.0),
             "nu_scale": lambda trial: trial.suggest_float("nu_scale", 0.1, 3, log=True),
         },
-        num_particles=lambda trial: 1,
-        gamma=lambda trial: 0.5,
-        initial_lr=lambda trial: 0.1,
-        max_epochs=lambda trial: 500,
+        num_particles=lambda _: 1,
+        gamma=lambda _: 0.5,
+        initial_lr=lambda _: 0.1,
+        max_epochs=lambda _: 500,
     ),
     "all": lambda train_data, torch_data: Trial_Spec(
         name="prodslda_all-f1",
@@ -752,7 +746,7 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
         },
         num_particles=lambda trial: trial.suggest_int("num_particles", 1, 7),
         gamma=lambda trial: trial.suggest_float("gamma", 0.1, 1.0, log=True),
-        max_epochs=lambda trial: 500,
+        max_epochs=lambda _: 500,
         initial_lr=lambda trial: trial.suggest_float("initial_lr", 0.01, 1.0, log=True),
     ),
 }
