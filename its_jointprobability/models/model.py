@@ -48,6 +48,9 @@ class Simple_Model:
     # store the device on which this model shall run
     device: Optional[torch.device] = None
 
+    # an annealing factor that rises during training
+    annealing_factor: float
+
     @abstractmethod
     def model(self, *args, **kwargs):
         """The prior model"""
@@ -70,7 +73,7 @@ class Simple_Model:
         data_loader: Data_Loader,
         initial_lr: float = 0.1,
         gamma: float = 0.5,
-        betas: tuple[float, float] = (0.95, 0.999),
+        betas: tuple[float, float] = (0.90, 0.999),
         min_epochs: int = 100,
         max_epochs: int = 1000,
         min_rel_std: float = 1e-3,
@@ -122,9 +125,20 @@ class Simple_Model:
         )
         svi = pyro.infer.SVI(self.model, self.guide, optim, elbo)
 
+        # get the list of annealing factors that shall be used during training
+        # at the end of training (i.e. for the last epoch), the annealing
+        # factor should equal 1.0
+        annealing_factors = torch.arange(max_epochs)
+        annealing_factors = (
+            self.annealing_factor * (1 - annealing_factors / max_epochs)
+            + 1.0 * annealing_factors / max_epochs
+        )
+        assert len(annealing_factors) == max_epochs
+
         # progress bar / iterator over epochs
         epochs = trange(max_epochs, desc="svi steps")
         for epoch in epochs:
+            self.annealing_factor = float(annealing_factors[epoch])
             batch_losses = list()
             for last_batch_in_epoch, batch in data_loader:
                 batch_size = get_batch_size(batch)
@@ -427,7 +441,7 @@ def eval_model(
     targets: torch.Tensor | dict[str, torch.Tensor],
     target_values: Iterable | dict[str, Iterable],
     eval_sites: str | dict[str, str],
-    cutoffs: float | dict[str, float],
+    cutoffs: Optional[float] | dict[str, Optional[float]],
     post_sample_funs: Post_Sample_Fun | dict[str, Post_Sample_Fun] | None = None,
 ) -> dict[str, Quality_Result]:
     if not isinstance(targets, dict):
