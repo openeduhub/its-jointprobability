@@ -367,6 +367,7 @@ def set_up_optuna_study(
     gamma: Optional[Callable[[optuna.trial.Trial], float]] = None,
     num_particles: Optional[Callable[[optuna.trial.Trial], int]] = None,
     max_epochs: Optional[Callable[[optuna.trial.Trial], int]] = None,
+    betas: Optional[Callable[[optuna.trial.Trial], tuple[float, float]]] = None,
     min_epochs=10,
     vectorize_particles: bool = True,
     seed: Optional[int] = 42,
@@ -392,6 +393,11 @@ def set_up_optuna_study(
         max_epochs = lambda trial: trial.suggest_int(
             "max_epoches", min_epochs, min_epochs + 50 * 6, 50
         )
+    if betas is None:
+        betas = lambda trial: (
+            trial.suggest_float("beta_1", 0.01, 0.99, log=True),
+            trial.suggest_float("beta_2", 0.01, 0.999, log=True),
+        )
 
     def objective(trial: optuna.trial.Trial) -> list[float]:
         trial_kwargs = {key: fun(trial) for key, fun in var_model_kwargs.items()}
@@ -401,12 +407,13 @@ def set_up_optuna_study(
         trial_elbo_num = trial.suggest_categorical(
             "elbo_num", list(elbo_choices.keys())
         )
+        trial_betas = betas(trial)
         # adjust the maximum number of epochs w.r.t. the number of particles
         # to keep training time roughly constant
         max_epochs_trial = int(max_epochs(trial) / num_particles_trial)
 
         pyro.get_param_store().clear()
-        # to prevent the experiment from studying different
+        # prevent the experiment from studying different
         # initializations accidentally
         pyro.set_rng_seed(seed)
 
@@ -440,6 +447,7 @@ def set_up_optuna_study(
             max_epochs=max_epochs_trial,
             metric_len=10,
             min_z_score=1.68,
+            betas=trial_betas,
         )
 
         return [fun(model) for fun in eval_funs_final]
