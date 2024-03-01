@@ -2,18 +2,19 @@ import math
 import random
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import reduce
-from typing import Optional, TypeVar
+from typing import Literal, Optional, TypeVar
 
 import nlprep.spacy.props as nlp
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from icecream import ic
 from nlprep import Collection, partial, tokenize_documents
 from pydantic import BaseModel
 
 T = TypeVar("T")
-MAX_BATCH_SIZE = 3500
+MAX_BATCH_SIZE = 3000
 
 
 def balanced_subset_mask(
@@ -262,13 +263,14 @@ class Quality_Result(BaseModel):
     precision: float | list[float]
     recall: float | list[float]
     f1_score: float | list[float]
-    cutoff: float
+    cutoff: float | list[float]
 
 
 def quality_measures(
     samples: torch.Tensor,
     targets: torch.Tensor,
-    cutoff: Optional[float] = None,
+    cutoff: Optional[float | Collection[float]] = None,
+    cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
     mean_dim: Optional[int] = None,
     parallel_dim: Optional[int] = None,
     use_median: bool = False,
@@ -284,26 +286,59 @@ def quality_measures(
     # to be positive
     if cutoff is None:
         # the cutoffs to try
-        # this follows a logistic interpolation between the min and max
-        cutoffs = samples.min() + (samples.max() - samples.min()) / (
-            1 + torch.exp(-torch.arange(-100, 100, device=samples.device) / 10)
-        )
+        if cutoff_compute_method == "grid-search":
+            # this follows a logistic interpolation between the min and max
+            cutoffs: torch.Tensor = samples.min() + (samples.max() - samples.min()) / (
+                1 + torch.exp(-torch.arange(-100, 100, device=samples.device) / 10)
+            )
+        elif cutoff_compute_method == "base-rate":
+            # this uses the base rate, transformed by an exponential,
+            # in order to keep values between 0 and 1.
+            # we also add a small value to the base rate in order to keep
+            # cutoffs at a minimum value
+            # cutoffs: torch.Tensor = (targets.mean(-2).unsqueeze(-2) + 0.01) ** (
+            #     torch.arange(40, 100, device=targets.device).unsqueeze(-1) / 100
+            # )
+            cutoffs = (
+                targets.mean(-2)
+                .maximum(torch.tensor(0.2, device=targets.device))
+                .unsqueeze(-2)
+            )
+
+        else:
+            raise ValueError("No proper cutoff computation method was given")
 
         # the quality measures for each cutoff
         scores = [
-            quality_measures(samples, targets, float(cutoff), None, None, use_median)
+            quality_measures(
+                samples,
+                targets,
+                cutoff=cutoff.tolist(),
+                parallel_dim=None,
+                mean_dim=None,
+                use_median=use_median,
+            )
             for cutoff in cutoffs
         ]
         f1_scores = torch.tensor([score.f1_score for score in scores]).nan_to_num()
 
         # select the cutoff where the F1 score is maximized
-        optim_cutoff = float(cutoffs[f1_scores.argmax()])
+        optim_cutoff = cutoffs[f1_scores.argmax()].tolist()
+
         return quality_measures(
-            samples, targets, optim_cutoff, None, parallel_dim, use_median
+            samples,
+            targets,
+            cutoff=optim_cutoff,
+            mean_dim=None,
+            parallel_dim=parallel_dim,
+            use_median=use_median,
         )
 
+    # turn the cutoffs into a torch.tensor, for easy broadcasting
+    cutoff_tensor = torch.tensor(cutoff, device=samples.device)
+
     targets = targets.bool()
-    predictions = samples >= cutoff
+    predictions = samples >= cutoff_tensor
 
     # negative indices start at the far right
     n = len(samples.shape)
@@ -334,5 +369,5 @@ def quality_measures(
         precision=precision.tolist(),
         recall=recall.tolist(),
         f1_score=(2 * (precision * recall) / (precision + recall)).tolist(),
-        cutoff=cutoff,
+        cutoff=cutoff_tensor.tolist(),
     )

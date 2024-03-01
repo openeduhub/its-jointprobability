@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from functools import partial
-from typing import Any, Optional, TypeVar
+from pprint import pprint
+from typing import Any, Literal, Optional, TypeVar
 
 import numpy as np
 import optuna
@@ -15,7 +16,6 @@ import torch
 import torch.nn.functional as F
 from icecream import ic
 from its_jointprobability.utils import (
-    Batch,
     Data_Loader,
     Quality_Result,
     batch_to_list,
@@ -236,8 +236,7 @@ class Simple_Model:
 
         # move the posterior samples back to the original device, now that they have been collected
         posterior_samples = {
-            key: tensor.to(self.device)
-            for key, tensor in posterior_samples.items()
+            key: tensor.to(self.device) for key, tensor in posterior_samples.items()
         }
 
         return self.clean_up_posterior_samples(posterior_samples)
@@ -270,6 +269,7 @@ class Simple_Model:
         num_samples: int = 1,
         mean_dim: Optional[int] = None,
         cutoff: Optional[float] = None,
+        cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
         post_sample_fun: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ) -> Quality_Result:
         samples = self.draw_posterior_samples(
@@ -291,6 +291,7 @@ class Simple_Model:
             samples,
             targets=targets.to(self.device).float(),
             cutoff=cutoff,
+            cutoff_compute_method=cutoff_compute_method,
             mean_dim=mean_dim,
         )
 
@@ -464,18 +465,21 @@ def eval_model(
     targets: torch.Tensor | dict[str, torch.Tensor],
     target_values: Iterable | dict[str, Iterable],
     eval_sites: str | dict[str, str],
-    cutoffs: Optional[float] | dict[str, Optional[float]],
+    cutoffs: Optional[
+        float | Collection[float] | Mapping[str, None | float | Collection[float]]
+    ],
+    cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
     post_sample_funs: Post_Sample_Fun | dict[str, Post_Sample_Fun] | None = None,
 ) -> dict[str, Quality_Result]:
-    if not isinstance(targets, dict):
+    if not isinstance(targets, Mapping):
         targets = {"": targets}
-    if not isinstance(target_values, dict):
+    if not isinstance(target_values, Mapping):
         target_values = {key: target_values for key in targets.keys()}
-    if not isinstance(eval_sites, dict):
+    if not isinstance(eval_sites, Mapping):
         eval_sites = {key: eval_sites for key in targets.keys()}
-    if not isinstance(cutoffs, dict):
+    if not isinstance(cutoffs, Mapping):
         cutoffs = {key: cutoffs for key in targets.keys()}
-    if not isinstance(post_sample_funs, dict):
+    if not isinstance(post_sample_funs, Mapping):
         post_sample_funs = (
             {key: post_sample_funs for key in targets.keys()}
             if post_sample_funs is not None
@@ -501,9 +505,14 @@ def eval_model(
         print("------------------------------")
         print(key)
         global_measures = quality_measures(
-            samples, target.to(model.device).float(), mean_dim=0, cutoff=cutoffs[key]
+            samples,
+            target.to(model.device).float(),
+            mean_dim=0,
+            cutoff=cutoffs[key],
+            cutoff_compute_method=cutoff_compute_method,
         )
-        print(f"global measures: {global_measures}")
+        print(f"global measures:")
+        pprint(global_measures)
 
         by_discipline = quality_measures(
             samples,
