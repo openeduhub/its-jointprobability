@@ -213,6 +213,12 @@ class Simple_Model:
         for batch in bar:
             with torch.no_grad():
                 posterior_batch: dict[str, torch.Tensor] = predictive(*batch)
+                # ensure that the posterior batch is on the CPU,
+                # to prevent this from failing due to limited VRAM
+                posterior_batch = {
+                    key: tensor.to(torch.device("cpu"))
+                    for key, tensor in posterior_batch.items()
+                }
 
             if posterior_samples is None:
                 posterior_samples = posterior_batch
@@ -227,6 +233,12 @@ class Simple_Model:
 
         if posterior_samples is None:
             raise ValueError("Cannot sample for empty data!")
+
+        # move the posterior samples back to the original device, now that they have been collected
+        posterior_samples = {
+            key: tensor.to(self.device)
+            for key, tensor in posterior_samples.items()
+        }
 
         return self.clean_up_posterior_samples(posterior_samples)
 
