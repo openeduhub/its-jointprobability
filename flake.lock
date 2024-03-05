@@ -38,11 +38,11 @@
         "nlprep": "nlprep"
       },
       "locked": {
-        "lastModified": 1708437847,
-        "narHash": "sha256-ZvkPh6FW3P0kivZcAFTbGIsCu3wnYd+KGzMkIG9G8tI=",
+        "lastModified": 1709724839,
+        "narHash": "sha256-aCEJwDJAEYgObS7w5x/wDKbjlB83equTTsLcfmVTd8o=",
         "owner": "openeduhub",
         "repo": "data-utils",
-        "rev": "c09b22312923c1b8807c329d7ca1b97aa59aeba5",
+        "rev": "3f265961c156ec9f99ea81cd6a464af43598a323",
         "type": "github"
       },
       "original": {
