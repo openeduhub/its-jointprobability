@@ -14,7 +14,7 @@ from nlprep import Collection, partial, tokenize_documents
 from pydantic import BaseModel
 
 T = TypeVar("T")
-MAX_BATCH_SIZE = 3000
+MAX_BATCH_SIZE = 1000
 
 
 def balanced_subset_mask(

@@ -271,6 +271,7 @@ class Simple_Model:
         cutoff: Optional[float] = None,
         cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
         post_sample_fun: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        **kwargs,
     ) -> Quality_Result:
         samples = self.draw_posterior_samples(
             data_loader=sequential_data_loader(
@@ -282,6 +283,7 @@ class Simple_Model:
             num_samples=num_samples,
             return_sites=[target_site],
             progress_bar=False,
+            **kwargs,
         )[target_site]
 
         if post_sample_fun is not None:

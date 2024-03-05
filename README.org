@@ -120,49 +120,49 @@ properties.ccm:educationalcontext
 --------------------------------------------------------------------
                     mean_prob  median_prob          prob_interval
 name                                                             
-Sekundarstufe I      0.692331     0.718085   [0.582539, 0.943744]
-Sekundarstufe II     0.517990     0.495094   [0.271072, 0.767662]
-Primarstufe          0.277492     0.245070   [0.0627538, 0.44477]
-Hochschule           0.232723     0.196314  [0.0495167, 0.318948]
-Erwachsenenbildung   0.223280     0.183457  [0.0332506, 0.349543]
-Förderschule         0.215071     0.177108  [0.0114718, 0.328954]
-Berufliche Bildung   0.203425     0.167925  [0.0253689, 0.304995]
+Sekundarstufe I      0.650375     0.649935   [0.476217, 0.942474]
+Sekundarstufe II     0.630549     0.648564   [0.447766, 0.877137]
+Erwachsenenbildung   0.274634     0.238311  [0.0453556, 0.437593]
+Berufliche Bildung   0.270562     0.215344   [0.030344, 0.428862]
+Primarstufe          0.254438     0.200334  [0.0676466, 0.413008]
+Hochschule           0.238566     0.198892  [0.0400588, 0.395438]
+Fortbildung          0.174981     0.149943  [0.0229047, 0.250499]
 
 properties.ccm:educationalintendedenduserrole
 --------------------------------------------------------------------
             mean_prob  median_prob          prob_interval
 name                                                     
-Lerner/in    0.827794     0.865599   [0.752396, 0.979508]
-Lehrer/in    0.784021     0.821362   [0.664374, 0.978042]
-Eltern       0.244595     0.209378    [0.05852, 0.378132]
-Berater/in   0.201367     0.173971  [0.0354922, 0.288331]
-Autor/in     0.179566     0.151420  [0.0644675, 0.323935]
-andere       0.177384     0.142052  [0.0197961, 0.298945]
-Verwaltung   0.160246     0.115763  [0.0221336, 0.249294]
+Lerner/in    0.812432     0.841863   [0.721717, 0.987055]
+Lehrer/in    0.774390     0.784744   [0.656749, 0.945968]
+Eltern       0.260211     0.215964  [0.0279707, 0.375697]
+Berater/in   0.219815     0.178926  [0.0167346, 0.325665]
+andere       0.191024     0.147603  [0.0488088, 0.335025]
+Verwaltung   0.179234     0.142024  [0.0456882, 0.322865]
+Autor/in     0.165183     0.133229  [0.0249609, 0.258302]
 
 properties.ccm:taxonid
 --------------------------------------------------------------------
-                            mean_prob  median_prob          prob_interval
-name                                                                     
-Mathematik                   0.483253     0.468197   [0.163375, 0.736279]
-Physik                       0.250275     0.210587  [0.0607533, 0.401126]
-Chemie                       0.231061     0.196059  [0.0304236, 0.346094]
-Deutsch                      0.224751     0.178948  [0.0384255, 0.383193]
-Türkisch                     0.187071     0.175560  [0.0377938, 0.306746]
-Kunst                        0.202953     0.170034  [0.0299437, 0.333432]
-Open Educational Resources   0.176492     0.169087  [0.0555426, 0.299351]
+                          mean_prob  median_prob          prob_interval
+name                                                                   
+Mathematik                 0.494072     0.489655  [0.0992957, 0.765889]
+Deutsch als Zweitsprache   0.225511     0.196682  [0.0306489, 0.316258]
+Politik                    0.225994     0.195935  [0.0454392, 0.356842]
+Allgemein                  0.209327     0.187801    [0.02192, 0.329086]
+Physik                     0.230024     0.186703   [0.015105, 0.336144]
+Chemie                     0.218400     0.176918  [0.0193982, 0.316795]
+Geschichte                 0.206341     0.175583  [0.0228382, 0.309636]
 
 properties.ccm:curriculum
 --------------------------------------------------------------------
-                                                  mean_prob  ...          prob_interval
-name                                                         ...                       
-Diabetes                                           0.196260  ...   [0.014939, 0.307594]
-Biologie                                           0.206040  ...   [0.0306991, 0.32765]
-Vierecke                                           0.215509  ...    [0.0217745, 0.3407]
-Vereinfachung von Termen                           0.212124  ...  [0.0207898, 0.346196]
-Tabellenkalkulation                                0.202356  ...   [0.050687, 0.350304]
-Welche Universität, Fachhochschule passt zu mir?   0.195951  ...  [0.0201714, 0.284639]
-Lebensmittelverschwendung                          0.205140  ...  [0.0191292, 0.317605]
+                                                    mean_prob  ...          prob_interval
+name                                                           ...                       
+Lineares Gleichungssystem                            0.207476  ...    [0.041509, 0.36034]
+Mathematik                                           0.216258  ...  [0.0129707, 0.331166]
+Skalarprodukt                                        0.214775  ...  [0.0235578, 0.365738]
+Aggregatzustände                                     0.179956  ...  [0.0329869, 0.301469]
+Ernährung                                            0.190366  ...  [0.0155058, 0.293468]
+Übergangsjahr: Wie kann ich sinnvoll ein Überga...   0.197622  ...   [0.0167681, 0.30547]
+Fähigkeiten und Kompetenzen                          0.184260  ...  [0.0373869, 0.288178]
 
 [7 rows x 3 columns]
 
@@ -170,13 +170,13 @@ properties.ccm:oeh_lrt
 --------------------------------------------------------------------
                                       mean_prob  ...          prob_interval
 name                                             ...                       
-Erklärvideo und gefilmtes Experiment   0.477213  ...    [0.17926, 0.670183]
-Video (Material)                       0.256183  ...   [0.0474351, 0.41231]
-Arbeitsblatt                           0.225019  ...  [0.0553062, 0.338843]
-Audio                                  0.205876  ...  [0.0503636, 0.296144]
-Übungsmaterial                         0.235690  ...  [0.0448412, 0.328751]
-Radio, Podcastfolge und Interview      0.242239  ...  [0.0376951, 0.409014]
-Unterrichtsbaustein                    0.217041  ...   [0.0458568, 0.36299]
+Erklärvideo und gefilmtes Experiment   0.499394  ...   [0.184153, 0.797513]
+Übungsmaterial                         0.249880  ...  [0.0461646, 0.428727]
+Video (Material)                       0.244218  ...  [0.0382613, 0.382363]
+Webseite                               0.232971  ...  [0.0455699, 0.392501]
+Anleitung                              0.218486  ...  [0.0313238, 0.356002]
+Arbeitsblatt                           0.211499  ...    [0.0324115, 0.3192]
+Webblog (dynamisch)                    0.196317  ...  [0.0246349, 0.271844]
 
 [7 rows x 3 columns]
 #+end_src
@@ -198,63 +198,61 @@ properties.ccm:educationalcontext
 --------------------------------------------------------------------
                     mean_prob  median_prob          prob_interval
 name                                                             
-Sekundarstufe I      0.683190     0.722519   [0.480897, 0.935672]
-Sekundarstufe II     0.516660     0.516096    [0.304274, 0.81109]
-Primarstufe          0.263792     0.215497  [0.0503154, 0.420455]
-Erwachsenenbildung   0.229375     0.208899  [0.0192415, 0.320347]
-Berufliche Bildung   0.211759     0.185400  [0.0178241, 0.319428]
-Fortbildung          0.186157     0.151185  [0.0248641, 0.264561]
-Fernunterricht       0.166105     0.148124   [0.0267559, 0.25395]
+Sekundarstufe II     0.648786     0.671350   [0.463289, 0.917173]
+Sekundarstufe I      0.605954     0.613362    [0.307345, 0.83083]
+Primarstufe          0.304019     0.256474  [0.0594975, 0.458202]
+Hochschule           0.232572     0.219640  [0.0343095, 0.357987]
+Erwachsenenbildung   0.246044     0.204131  [0.0399175, 0.389946]
+Berufliche Bildung   0.227938     0.193474  [0.0472051, 0.335233]
+Fortbildung          0.179638     0.146967  [0.0170354, 0.255713]
 
 properties.ccm:educationalintendedenduserrole
 --------------------------------------------------------------------
             mean_prob  median_prob          prob_interval
 name                                                     
-Lerner/in    0.826442     0.856607   [0.734873, 0.971229]
-Lehrer/in    0.799292     0.821951   [0.710377, 0.950753]
-Eltern       0.252741     0.216306  [0.0845035, 0.399092]
-andere       0.193487     0.166828  [0.0256586, 0.302041]
-Berater/in   0.201696     0.161290   [0.0291831, 0.31722]
-Verwaltung   0.192295     0.142625  [0.0243148, 0.314775]
-Autor/in     0.185751     0.140554  [0.0138485, 0.291313]
+Lerner/in    0.776498     0.818563   [0.648206, 0.962651]
+Lehrer/in    0.766111     0.791410   [0.660659, 0.967891]
+Eltern       0.269101     0.240070  [0.0567236, 0.382015]
+Berater/in   0.215461     0.179562  [0.0239205, 0.327621]
+Verwaltung   0.180926     0.150161  [0.0220312, 0.255679]
+andere       0.177603     0.147757  [0.0182386, 0.268426]
+Autor/in     0.172203     0.145083  [0.0241181, 0.248142]
 
 properties.ccm:taxonid
 --------------------------------------------------------------------
-            mean_prob  median_prob          prob_interval
-name                                                     
-Mathematik   0.510150     0.558357   [0.231529, 0.779039]
-Physik       0.251417     0.221955  [0.0627578, 0.408402]
-Chemie       0.244662     0.217246  [0.0250657, 0.373695]
-Informatik   0.232572     0.211144  [0.0307093, 0.341449]
-Geschichte   0.196182     0.170926  [0.0195766, 0.296678]
-Biologie     0.209610     0.167237  [0.0238686, 0.308671]
-Allgemein    0.202371     0.164849  [0.0277425, 0.351945]
+                          mean_prob  median_prob          prob_interval
+name                                                                   
+Mathematik                 0.478852     0.489742    [0.11984, 0.727403]
+Deutsch als Zweitsprache   0.233825     0.205792  [0.0483311, 0.388667]
+Kunst                      0.231683     0.191601  [0.0274931, 0.340174]
+Deutsch                    0.214982     0.187795   [0.0457239, 0.34265]
+Physik                     0.211658     0.187460   [0.021266, 0.327361]
+Politik                    0.221168     0.170802  [0.0279264, 0.335183]
+Allgemein                  0.202219     0.168948  [0.0530887, 0.339311]
 
 properties.ccm:curriculum
 --------------------------------------------------------------------
-                                                    mean_prob  ...          prob_interval
-name                                                           ...                       
-Satzgruppe des Pythagoras                            0.213745  ...  [0.0193775, 0.310041]
-Binomische Formeln                                   0.198325  ...  [0.0161183, 0.323002]
-Weiterbildung und Lernen als fortlaufender Prozess   0.198178  ...   [0.0402885, 0.30787]
-Lineares Gleichungssystem                            0.213514  ...  [0.0445536, 0.348081]
-Biologie                                             0.198317  ...  [0.0161375, 0.301182]
-Der Mensch                                           0.205911  ...   [0.0111975, 0.32936]
-Kreise                                               0.200650  ...  [0.0369457, 0.299825]
-
-[7 rows x 3 columns]
+                                   mean_prob  median_prob          prob_interval
+name                                                                            
+Mathematik                          0.223415     0.190948  [0.0213118, 0.359008]
+Nachhaltige Wirtschaft und Arbeit   0.191297     0.181888   [0.026116, 0.297094]
+Deutsch als Zweitsprache            0.185542     0.176269  [0.0131973, 0.292496]
+Epochen und Stile                   0.198216     0.174879  [0.0173901, 0.290976]
+Analysis                            0.212195     0.174110  [0.0534262, 0.350813]
+Umwelt                              0.219425     0.172068  [0.0366603, 0.348605]
+Ableitungen in Sachzusammenhängen   0.200205     0.170332  [0.0257077, 0.288614]
 
 properties.ccm:oeh_lrt
 --------------------------------------------------------------------
                                       mean_prob  ...          prob_interval
 name                                             ...                       
-Erklärvideo und gefilmtes Experiment   0.494976  ...   [0.217437, 0.712248]
-Übungsmaterial                         0.219505  ...  [0.0374969, 0.327884]
-Video (Material)                       0.233734  ...  [0.0253678, 0.353945]
-Material                               0.210493  ...  [0.0379453, 0.348032]
-Bild (Material)                        0.239445  ...  [0.0343949, 0.398618]
-Radio, Podcastfolge und Interview      0.239371  ...   [0.0467607, 0.35076]
-Webseite                               0.221816  ...   [0.037388, 0.331483]
+Erklärvideo und gefilmtes Experiment   0.464646  ...   [0.220549, 0.803362]
+Übungsmaterial                         0.269032  ...  [0.0525745, 0.394947]
+Video (Material)                       0.245037  ...  [0.0404219, 0.398931]
+Webseite                               0.234012  ...   [0.0307783, 0.36802]
+Radio, Podcastfolge und Interview      0.228083  ...  [0.0481971, 0.407679]
+Unterrichtsbaustein                    0.216690  ...  [0.0381985, 0.348063]
+Lehr- und Lernmaterial                 0.215797  ...  [0.0561255, 0.317041]
 
 [7 rows x 3 columns]
 #+end_src
@@ -277,61 +275,63 @@ properties.ccm:educationalcontext
 --------------------------------------------------------------------
                     mean_prob  median_prob          prob_interval
 name                                                             
-Sekundarstufe I      0.658609     0.688432   [0.456309, 0.913673]
-Sekundarstufe II     0.499837     0.498651    [0.21088, 0.749799]
-Primarstufe          0.263906     0.229325  [0.0345881, 0.408057]
-Berufliche Bildung   0.211428     0.180484  [0.0209277, 0.322489]
-Erwachsenenbildung   0.207124     0.175321  [0.0324234, 0.320095]
-Hochschule           0.199566     0.164999  [0.0239649, 0.312029]
-Förderschule         0.186474     0.153843  [0.0190114, 0.286783]
+Sekundarstufe I      0.638111     0.661984   [0.445552, 0.912764]
+Sekundarstufe II     0.616061     0.631017   [0.397043, 0.883593]
+Primarstufe          0.288292     0.254156  [0.0441002, 0.449876]
+Erwachsenenbildung   0.269190     0.230922  [0.0255184, 0.418021]
+Berufliche Bildung   0.243994     0.209324  [0.0289624, 0.369618]
+Hochschule           0.228815     0.192353   [0.0321768, 0.35341]
+Elementarbereich     0.190382     0.155068  [0.0176414, 0.290207]
 
 properties.ccm:educationalintendedenduserrole
 --------------------------------------------------------------------
             mean_prob  median_prob          prob_interval
 name                                                     
-Lerner/in    0.825249     0.856517     [0.7349, 0.980877]
-Lehrer/in    0.795800     0.832368   [0.687892, 0.974864]
-Eltern       0.258944     0.226199  [0.0323144, 0.395834]
-Berater/in   0.204126     0.166351  [0.0267322, 0.325526]
-Autor/in     0.174305     0.142817  [0.0269672, 0.283295]
-andere       0.167049     0.131891  [0.0134233, 0.252472]
-Verwaltung   0.163433     0.130775  [0.0197062, 0.252016]
+Lehrer/in    0.773623     0.810144   [0.640229, 0.964869]
+Lerner/in    0.764668     0.805824   [0.627441, 0.973616]
+Eltern       0.260677     0.222131   [0.039315, 0.410847]
+Berater/in   0.196761     0.158743  [0.0260993, 0.307512]
+Verwaltung   0.183323     0.148540   [0.0177793, 0.28434]
+Autor/in     0.179138     0.147470  [0.0196697, 0.278264]
+andere       0.177815     0.140328  [0.0210966, 0.280936]
 
 properties.ccm:taxonid
 --------------------------------------------------------------------
-            mean_prob  median_prob          prob_interval
-name                                                     
-Mathematik   0.521895     0.532841   [0.228919, 0.806451]
-Physik       0.241995     0.206897  [0.0320996, 0.378282]
-Chemie       0.239413     0.199589  [0.0259434, 0.371421]
-Deutsch      0.214712     0.180862  [0.0243473, 0.323832]
-Politik      0.212956     0.177508  [0.0211251, 0.328877]
-Allgemein    0.205636     0.172697  [0.0212273, 0.320645]
-Biologie     0.203152     0.168748  [0.0191694, 0.310678]
+                          mean_prob  median_prob          prob_interval
+name                                                                   
+Mathematik                 0.487437     0.473707   [0.167823, 0.795746]
+Deutsch als Zweitsprache   0.229273     0.188209  [0.0266478, 0.362951]
+Geschichte                 0.232723     0.187812  [0.0267367, 0.374852]
+Physik                     0.226204     0.182633  [0.0206784, 0.346156]
+Politik                    0.217606     0.180313  [0.0244341, 0.340364]
+Deutsch                    0.212750     0.174721  [0.0202096, 0.335373]
+Chemie                     0.215153     0.174053   [0.0143999, 0.32917]
 
 properties.ccm:curriculum
 --------------------------------------------------------------------
-                                    mean_prob  median_prob          prob_interval
-name                                                                             
-Satzgruppe des Pythagoras            0.211238     0.173123   [0.0176724, 0.33111]
-Aufstellen & Lösen von Gleichungen   0.196599     0.160403  [0.0186907, 0.309161]
-Der Mensch                           0.193911     0.158348  [0.0219739, 0.305716]
-Vereinfachung von Termen             0.194716     0.157996  [0.0155213, 0.306968]
-Kreise                               0.193656     0.155594  [0.0149855, 0.302855]
-Lineares Gleichungssystem            0.191701     0.154589  [0.0141277, 0.300827]
-Wurzeln                              0.190054     0.154351  [0.0158132, 0.295259]
+                                              mean_prob  ...          prob_interval
+name                                                     ...                       
+Mathematik                                     0.202951  ...  [0.0145639, 0.320739]
+Analytische Geometrie                          0.192927  ...  [0.0135136, 0.297871]
+Biologie                                       0.192391  ...  [0.0172394, 0.303099]
+Gebrochenrationale Funktionen                  0.189952  ...   [0.0219041, 0.30222]
+Bernoulli-Experimente und Binomialverteilung   0.187321  ...  [0.0146942, 0.288069]
+Deutsch als Zweitsprache                       0.189710  ...  [0.0124937, 0.290728]
+Satzgruppe des Pythagoras                      0.188894  ...  [0.0168771, 0.301735]
+
+[7 rows x 3 columns]
 
 properties.ccm:oeh_lrt
 --------------------------------------------------------------------
                                       mean_prob  ...          prob_interval
 name                                             ...                       
-Erklärvideo und gefilmtes Experiment   0.495738  ...   [0.225209, 0.754569]
-Übungsmaterial                         0.224760  ...  [0.0242511, 0.348175]
-Arbeitsblatt                           0.219446  ...  [0.0184992, 0.333683]
-Video (Material)                       0.222889  ...  [0.0242549, 0.343997]
-Radio, Podcastfolge und Interview      0.221525  ...  [0.0236534, 0.344383]
-Material                               0.213232  ...  [0.0261741, 0.329921]
-Webseite                               0.213731  ...  [0.0157222, 0.323309]
+Erklärvideo und gefilmtes Experiment   0.453829  ...     [0.1657, 0.711461]
+Video (Material)                       0.254912  ...  [0.0356642, 0.395525]
+Übungsmaterial                         0.229821  ...  [0.0235575, 0.347923]
+Arbeitsblatt                           0.229997  ...  [0.0307811, 0.357341]
+Webseite                               0.225107  ...  [0.0307882, 0.353709]
+Material                               0.217055  ...  [0.0247682, 0.335877]
+Unterrichtsbaustein                    0.204640  ...  [0.0255444, 0.325461]
 
 [7 rows x 3 columns]
 #+end_src
@@ -354,61 +354,61 @@ properties.ccm:educationalcontext
 --------------------------------------------------------------------
                     mean_prob  median_prob          prob_interval
 name                                                             
-Sekundarstufe I      0.662044     0.688419   [0.488721, 0.928541]
-Sekundarstufe II     0.503888     0.503972   [0.246343, 0.784959]
-Primarstufe          0.263753     0.228680  [0.0419882, 0.406517]
-Erwachsenenbildung   0.213378     0.175600  [0.0237929, 0.331235]
-Berufliche Bildung   0.207389     0.174113  [0.0253906, 0.320788]
-Hochschule           0.199683     0.166493   [0.025716, 0.310804]
-Förderschule         0.186450     0.150110  [0.0266593, 0.292505]
+Sekundarstufe I      0.637236     0.660007   [0.428781, 0.903794]
+Sekundarstufe II     0.611284     0.627422   [0.392889, 0.883513]
+Primarstufe          0.278792     0.246145  [0.0641373, 0.447555]
+Erwachsenenbildung   0.270328     0.228745  [0.0302605, 0.417045]
+Berufliche Bildung   0.241922     0.204328  [0.0323723, 0.383281]
+Hochschule           0.234734     0.199555  [0.0294865, 0.371672]
+Elementarbereich     0.190913     0.154930  [0.0219478, 0.296927]
 
 properties.ccm:educationalintendedenduserrole
 --------------------------------------------------------------------
             mean_prob  median_prob          prob_interval
 name                                                     
-Lerner/in    0.825668     0.862078   [0.735341, 0.981974]
-Lehrer/in    0.793948     0.826260   [0.674709, 0.969699]
-Eltern       0.264737     0.227945    [0.0338977, 0.4122]
-Berater/in   0.204787     0.168798  [0.0217053, 0.317751]
-Verwaltung   0.172169     0.138953  [0.0148901, 0.266908]
-Autor/in     0.175189     0.136450  [0.0169678, 0.269489]
-andere       0.167875     0.131675  [0.0135711, 0.255783]
+Lehrer/in    0.777127     0.812124   [0.649301, 0.967657]
+Lerner/in    0.772174     0.808908   [0.645105, 0.972512]
+Eltern       0.263717     0.232002  [0.0313281, 0.401655]
+Berater/in   0.192194     0.154960  [0.0275634, 0.305433]
+Verwaltung   0.182891     0.145814  [0.0130272, 0.279022]
+Autor/in     0.174444     0.142872  [0.0192079, 0.276915]
+andere       0.174997     0.139539  [0.0136546, 0.269341]
 
 properties.ccm:taxonid
 --------------------------------------------------------------------
-            mean_prob  median_prob          prob_interval
-name                                                     
-Mathematik   0.519079     0.522892   [0.256903, 0.829561]
-Chemie       0.239210     0.207408  [0.0303464, 0.368363]
-Physik       0.238974     0.200913  [0.0302199, 0.364466]
-Deutsch      0.216316     0.180823  [0.0318156, 0.339687]
-Politik      0.210732     0.175835  [0.0258734, 0.328161]
-Biologie     0.203062     0.169096  [0.0308598, 0.324707]
-Allgemein    0.201199     0.165110  [0.0278233, 0.307222]
+                          mean_prob  median_prob          prob_interval
+name                                                                   
+Mathematik                 0.494296     0.486950   [0.174335, 0.804644]
+Physik                     0.229403     0.193991   [0.023521, 0.357142]
+Deutsch als Zweitsprache   0.229441     0.186957  [0.0177211, 0.353353]
+Allgemein                  0.208734     0.174747  [0.0233007, 0.317374]
+Geschichte                 0.221912     0.174606  [0.0200638, 0.352404]
+Deutsch                    0.209815     0.174493  [0.0306771, 0.332959]
+Politik                    0.212465     0.172796  [0.0187306, 0.324084]
 
 properties.ccm:curriculum
 --------------------------------------------------------------------
-                                  mean_prob  median_prob          prob_interval
-name                                                                           
-Satzgruppe des Pythagoras          0.209435     0.169100  [0.0161071, 0.319896]
-Wurzeln                            0.195615     0.158461  [0.0240756, 0.312857]
-Lineares Gleichungssystem          0.193405     0.157772  [0.0177411, 0.303061]
-Mathematik                         0.189264     0.156774  [0.0115207, 0.284851]
-Biologie                           0.190039     0.156628   [0.017119, 0.295732]
-Informationelle Selbstbestimmung   0.196063     0.155590  [0.0160983, 0.307456]
-Vierecke                           0.191490     0.155011  [0.0220276, 0.308967]
+                                   mean_prob  median_prob          prob_interval
+name                                                                            
+Mathematik                          0.196558     0.157544    [0.01665, 0.305773]
+Biologie                            0.194037     0.156690   [0.0223312, 0.31621]
+Ableitungen in Sachzusammenhängen   0.188912     0.155285  [0.0206741, 0.299471]
+Skalarprodukt                       0.187421     0.154744  [0.0144917, 0.287044]
+Analytische Geometrie               0.194463     0.154371  [0.0172769, 0.308548]
+Deutsch als Zweitsprache            0.191703     0.154137  [0.0148805, 0.301421]
+Satzgruppe des Pythagoras           0.191392     0.152562  [0.0195216, 0.306143]
 
 properties.ccm:oeh_lrt
 --------------------------------------------------------------------
                                       mean_prob  ...          prob_interval
 name                                             ...                       
-Erklärvideo und gefilmtes Experiment   0.492040  ...   [0.238295, 0.775026]
-Radio, Podcastfolge und Interview      0.225563  ...  [0.0343398, 0.363546]
-Video (Material)                       0.226583  ...  [0.0269412, 0.350639]
-Arbeitsblatt                           0.223179  ...  [0.0241333, 0.345819]
-Webseite                               0.216637  ...  [0.0253611, 0.323664]
-Übungsmaterial                         0.225719  ...  [0.0238557, 0.353412]
-Unterrichtsbaustein                    0.212761  ...  [0.0276742, 0.326026]
+Erklärvideo und gefilmtes Experiment   0.462835  ...   [0.185632, 0.730651]
+Video (Material)                       0.256223  ...  [0.0360177, 0.398591]
+Übungsmaterial                         0.234442  ...  [0.0296174, 0.355309]
+Arbeitsblatt                           0.229298  ...  [0.0430873, 0.362969]
+Webseite                               0.227732  ...  [0.0329107, 0.364305]
+Material                               0.217038  ...  [0.0296025, 0.337353]
+Lehr- und Lernmaterial                 0.203912  ...  [0.0243773, 0.310556]
 
 [7 rows x 3 columns]
 #+end_src
@@ -431,49 +431,49 @@ properties.ccm:educationalcontext
 --------------------------------------------------------------------
                     mean_prob  median_prob          prob_interval
 name                                                             
-Sekundarstufe I      0.796337     0.828975   [0.689035, 0.979917]
-Sekundarstufe II     0.644312     0.677070   [0.453589, 0.931214]
-Berufliche Bildung   0.310955     0.275947  [0.0596451, 0.495838]
-Erwachsenenbildung   0.239661     0.202989  [0.0365591, 0.380587]
-Hochschule           0.212258     0.183743  [0.0361837, 0.332298]
-Förderschule         0.179248     0.145646  [0.0196048, 0.273275]
-Fortbildung          0.171155     0.134869  [0.0151607, 0.267742]
+Sekundarstufe II     0.646279     0.668913   [0.447191, 0.912178]
+Sekundarstufe I      0.619456     0.636617   [0.432322, 0.917527]
+Hochschule           0.337837     0.305657   [0.0784169, 0.53107]
+Berufliche Bildung   0.271313     0.237556  [0.0645445, 0.429555]
+Primarstufe          0.240357     0.202766  [0.0454522, 0.383768]
+Erwachsenenbildung   0.222303     0.186831   [0.0247643, 0.34336]
+Fortbildung          0.195987     0.156347  [0.0237273, 0.304507]
 
 properties.ccm:educationalintendedenduserrole
 --------------------------------------------------------------------
             mean_prob  median_prob          prob_interval
 name                                                     
-Lerner/in    0.832998     0.863740   [0.748389, 0.989895]
-Lehrer/in    0.788018     0.823279    [0.676752, 0.97254]
-Eltern       0.206720     0.168848   [0.028756, 0.328366]
-andere       0.184372     0.147973   [0.0178754, 0.28211]
-Autor/in     0.177093     0.145425  [0.0115615, 0.273851]
-Berater/in   0.167223     0.130481  [0.0229978, 0.261367]
-Verwaltung   0.165769     0.126063  [0.0195518, 0.258476]
+Lerner/in    0.801462     0.835959    [0.70078, 0.985282]
+Lehrer/in    0.753343     0.784914   [0.622986, 0.971186]
+Eltern       0.361936     0.338034  [0.0593296, 0.538968]
+Berater/in   0.182221     0.144538   [0.0191871, 0.29845]
+Verwaltung   0.174282     0.137354  [0.0170535, 0.264289]
+andere       0.170844     0.134796   [0.016569, 0.263913]
+Autor/in     0.173126     0.133583  [0.0268048, 0.278286]
 
 properties.ccm:taxonid
 --------------------------------------------------------------------
-                     mean_prob  median_prob          prob_interval
-name                                                              
-Geschichte            0.837997     0.881057   [0.737184, 0.994319]
-Politik               0.450077     0.435862    [0.138054, 0.66363]
-Wirtschaftskunde      0.229250     0.190560  [0.0303523, 0.363715]
-Pädagogik             0.196376     0.157236  [0.0161843, 0.304972]
-Türkisch              0.192485     0.153185  [0.0128424, 0.297276]
-Chemie                0.186445     0.150590   [0.0199959, 0.28217]
-Darstellendes Spiel   0.186098     0.150278  [0.0208997, 0.294093]
+                  mean_prob  median_prob          prob_interval
+name                                                           
+Geschichte         0.748833     0.793158   [0.601002, 0.984797]
+Politik            0.351113     0.318933  [0.0693411, 0.556321]
+Wirtschaftskunde   0.226096     0.187711   [0.032532, 0.356539]
+Kunst              0.224878     0.181615  [0.0305061, 0.345695]
+Allgemein          0.212252     0.173540   [0.028438, 0.329978]
+Religion           0.208940     0.163117   [0.021676, 0.330102]
+Pädagogik          0.187854     0.159581  [0.0311562, 0.294557]
 
 properties.ccm:curriculum
 --------------------------------------------------------------------
-                                     mean_prob  ...          prob_interval
-name                                            ...                       
-Deutschland 1949 - 1990               0.262135  ...  [0.0279546, 0.410357]
-Deutsches Kaiserreich                 0.260044  ...  [0.0426996, 0.426064]
-Personen in Deutschland 1949 - 1990   0.229730  ...  [0.0234668, 0.360599]
-Stadtgeschichte                       0.229914  ...  [0.0239561, 0.348898]
-Landeskunde und Interkulturelles      0.221693  ...  [0.0270007, 0.336875]
-Mauerbau                              0.214694  ...  [0.0249802, 0.339248]
-Nationalsozialismus                   0.214554  ...  [0.0129648, 0.329657]
+                                             mean_prob  ...          prob_interval
+name                                                    ...                       
+Personen in Deutschland 1949 - 1990           0.218012  ...  [0.0190998, 0.327813]
+Sport in der Geschichte                       0.207291  ...   [0.0264573, 0.31436]
+Inflation                                     0.208866  ...    [0.01967, 0.328671]
+Frauen- und Männerbilder in der Geschichte    0.203339  ...  [0.0116871, 0.317109]
+Totalitäre Erziehung im Nationalsozialismus   0.201463  ...  [0.0170096, 0.317406]
+Deutsches Kaiserreich                         0.207925  ...  [0.0249353, 0.322412]
+Europäische Union                             0.197422  ...  [0.0190202, 0.314776]
 
 [7 rows x 3 columns]
 
@@ -481,13 +481,13 @@ properties.ccm:oeh_lrt
 --------------------------------------------------------------------
                                       mean_prob  ...          prob_interval
 name                                             ...                       
-Unterrichtsbaustein                    0.377082  ...     [0.120774, 0.5968]
-Webseite                               0.361136  ...  [0.0829686, 0.584905]
-Erklärvideo und gefilmtes Experiment   0.253305  ...  [0.0486586, 0.398472]
-Dokumente und textbasierte Inhalte     0.243579  ...  [0.0347435, 0.384221]
-Nachschlagewerk und Glossareintrag     0.213112  ...  [0.0268913, 0.329742]
-Radio, Podcastfolge und Interview      0.211264  ...   [0.0207321, 0.31667]
-Fachliche News                         0.206781  ...  [0.0252109, 0.317597]
+Radio, Podcastfolge und Interview      0.373462  ...  [0.0693482, 0.572374]
+Webseite                               0.306538  ...   [0.0606127, 0.47317]
+Unterrichtsbaustein                    0.269689  ...  [0.0478187, 0.431032]
+Erklärvideo und gefilmtes Experiment   0.232542  ...   [0.0255865, 0.35796]
+Arbeitsblatt                           0.217813  ...  [0.0335333, 0.347041]
+Dokumente und textbasierte Inhalte     0.209264  ...  [0.0422046, 0.335663]
+Artikel und Einzelpublikation          0.206863  ...  [0.0230095, 0.321873]
 
 [7 rows x 3 columns]
 #+end_src

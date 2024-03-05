@@ -20,6 +20,7 @@ from icecream import ic
 from its_jointprobability.data import (
     Split_Data,
     load_data,
+    load_model,
     make_data,
     save_data,
     save_model,
@@ -30,6 +31,7 @@ from its_jointprobability.models.model import (
     eval_model,
     set_up_optuna_study,
 )
+from its_jointprobability import utils
 from its_jointprobability.utils import Data_Loader, default_data_loader
 
 
@@ -43,15 +45,15 @@ class ProdSLDA(Model):
         vocab: Sequence[str],
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
-        num_topics: int = 320,
+        num_topics: int = 217,
         cov_rank: Optional[int] = None,
-        hid_size: int = 350,
+        hid_size: int = 923,
         hid_num: int = 1,
-        dropout: float = 0.2,
-        nu_loc: float = -4,
-        nu_scale: float = 2,
+        dropout: float = 0.57,
+        nu_loc: float = -6.7,
+        nu_scale: float = 0.85,
         target_scale: Optional[float] = 1.0,
-        annealing_factor: float = 0.1,
+        annealing_factor: float = 0.012,
         use_batch_normalization: bool = True,
         correlated_nus: bool = False,
         mle_priors: bool = True,
@@ -110,30 +112,34 @@ class ProdSLDA(Model):
         self.mle_priors = mle_priors
         self.device = device
 
+        # define the decoder, which takes topic mixtures
+        # and returns word probabilities.
         self.decoder = nn.Sequential(
+            nn.Linear(num_topics, hid_size),
+            nn.Tanh(),
             nn.Dropout(dropout),
-            nn.Linear(num_topics, vocab_size),
+            nn.Linear(hid_size, vocab_size),
         )
         if use_batch_normalization:
-            self.decoder.append(nn.BatchNorm1d(vocab_size, affine=False))
+            self.decoder.append(nn.BatchNorm1d(vocab_size, affine=True))
         self.decoder.append(nn.Softmax(-1))
 
+        # define the encoder, which takes word probabilities
+        # and returns parameters for the distribution of topics
         self.encoder = nn.Sequential(
             nn.Linear(vocab_size, hid_size),
         )
-
         cur_hid_size, prev_hid_size = hid_size // 2, hid_size
         for _ in range(hid_num - 1):
             self.encoder.append(nn.Tanh())
             self.encoder.append(nn.Linear(prev_hid_size, cur_hid_size))
             prev_hid_size = cur_hid_size
             cur_hid_size = prev_hid_size // 2
-
         self.encoder.append(nn.Tanh())
         self.encoder.append(nn.Dropout(dropout))
         self.encoder.append(nn.Linear(prev_hid_size, num_topics * 2))
         if use_batch_normalization:
-            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
+            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=True))
 
         self.to(device)
         ic(self)
@@ -151,11 +157,16 @@ class ProdSLDA(Model):
         if obs_masks is None:
             obs_masks = self._get_obs_mask(*targets)
 
-        docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
+        docs_plate = pyro.plate("documents_plate", docs.shape[-2], dim=-1)
 
         # nu is the matrix mapping the relationship between latent topic
         # and targets
-        nu_loc_fun = lambda: self.nu_loc * docs.new_ones([self.num_topics, n])
+        size_tensor = torch.tensor(self.target_sizes, device=docs.device)
+        nu_loc_fun = (
+            lambda: self.nu_loc
+            * docs.new_ones([self.num_topics, n])
+            * torch.repeat_interleave(1 / size_tensor, size_tensor)
+        )
         nu_scale_fun = lambda: self.nu_scale * docs.new_ones([self.num_topics, n])
         nu_loc = pyro.param("nu_loc", nu_loc_fun) if self.mle_priors else nu_loc_fun()
         nu_scale = (
@@ -165,6 +176,8 @@ class ProdSLDA(Model):
         )
         with pyro.poutine.scale(None, self.annealing_factor):
             nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
+
+        ic(nu.shape)
 
         with docs_plate:
             # theta is each document's topic applicability
@@ -188,15 +201,17 @@ class ProdSLDA(Model):
                 logtheta = pyro.sample(
                     "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
                 )
-            if len(logtheta.shape) > 2:
-                logtheta = logtheta.squeeze(0)
+            ic(logtheta.shape)
+            # if len(logtheta.shape) > 2:
+            #     logtheta = logtheta.squeeze(0)
             theta = F.softmax(logtheta, -1)
+            ic(theta.shape)
 
         # get each document's word distribution from the decoder.
         # we write this outside the document plate because the nn
         # can only handle two-dimensional inputs
-        pyro.module("decoder", self.decoder, update_module_params=True)
-        count_param = self.decoder(theta)
+        count_param = self.count_param(theta)
+        ic(count_param.shape)
 
         with docs_plate:
             # the distribution of the actual document contents.
@@ -218,6 +233,7 @@ class ProdSLDA(Model):
                     "a",
                     dist.Normal(torch.matmul(theta, nu), 1).to_event(1),
                 )
+                ic(a.shape)
 
             probs_col = [
                 pyro.deterministic(f"probs_{i}", F.sigmoid(a_local))
@@ -230,7 +246,8 @@ class ProdSLDA(Model):
                     with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
                         targets_i = targets[i] if len(targets) > i else None
                         obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
-                        pyro.sample(
+                        ic(probs.shape)
+                        target = pyro.sample(
                             f"target_{i}",
                             dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
                             obs=targets_i.swapaxes(-1, -2)
@@ -239,6 +256,7 @@ class ProdSLDA(Model):
                             obs_mask=obs_masks_i,
                             infer={"enumerate": "parallel"},
                         ).swapaxes(-1, -2)
+                        ic(target.shape)
 
     def guide(
         self,
@@ -247,10 +265,12 @@ class ProdSLDA(Model):
         obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
     ):
         n = sum(self.target_sizes)
+        ic(n)
+        ic(docs.shape)
         if obs_masks is None:
             obs_masks = self._get_obs_mask(*targets)
 
-        docs_plate = pyro.plate("documents_plate", docs.shape[0], dim=-1)
+        docs_plate = pyro.plate("documents_plate", docs.shape[-2], dim=-1)
 
         # variational parameters for the relationship between topics and targets
         mu_q = pyro.param(
@@ -283,44 +303,91 @@ class ProdSLDA(Model):
                     "nu",
                     dist.Normal(mu_q, cov_diag).to_event(2),
                 )
+            if len(nu_q.shape) > 2 and nu_q.shape[-3] == 1:
+                nu_q.squeeze_(-3)
+            ic(nu_q.shape)
 
         with docs_plate:
+            # theta is each document's topic applicability
             with pyro.poutine.scale(None, self.annealing_factor):
                 logtheta_q = pyro.sample(
                     "logtheta", dist.Normal(*self.logtheta_params(docs)).to_event(1)
                 )
+            ic(logtheta_q.shape)
             theta_q = F.softmax(logtheta_q, -1)
+            ic(theta_q.shape)
 
             a_q_scale = pyro.param(
                 "a_q_scale",
                 lambda: docs.new_ones(n),
                 constraint=dist.constraints.positive,
             )
+            ic(a_q_scale.shape)
+            ic(torch.matmul(theta_q, nu_q).shape)
 
             with pyro.poutine.scale(None, self.annealing_factor):
                 a_q = pyro.sample(
                     "a",
                     dist.Normal(torch.matmul(theta_q, nu_q), a_q_scale).to_event(1),
                 )
+                ic(a_q.shape)
 
-            probs_col = [
+            probs_q_col = [
                 F.sigmoid(a_local)
                 for _, a_local in enumerate(a_q.split(self.target_sizes, -1))
             ]
 
-            for i, probs in enumerate(probs_col):
+            for i, probs_q in enumerate(probs_q_col):
                 with pyro.poutine.scale(scale=self.target_scale):
                     with pyro.plate(f"target_{i}_plate"):
-                        pyro.sample(
+                        if len(probs_q.shape) > 2 and probs_q.shape[-3] == 1:
+                            probs_q.squeeze_(-3)
+                        ic(probs_q.shape)
+                        target_q = pyro.sample(
                             f"target_{i}_unobserved",
-                            dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
+                            dist.Bernoulli(probs_q.swapaxes(-1, -2)),  # type: ignore
                             infer={"enumerate": "parallel"},
                         ).swapaxes(-1, -2)
+                        ic(target_q.shape)
+
+    def count_param(self, theta: torch.Tensor) -> torch.Tensor:
+        pyro.module("decoder", self.decoder, update_module_params=True)
+        # if we have more than one batch dimension, combine them all into one,
+        # as we can only work with 2D inputs in the neural networks
+        theta_shape = theta.shape
+        if len(theta_shape) > 2:
+            batch_size = int(np.prod(theta_shape[:-1]))
+            theta = theta.reshape(batch_size, theta_shape[-1])
+
+        count_param = self.decoder(theta)
+
+        # convert the outputs of the neural network back to the batch
+        # dimensions we expect (if necessary)
+        if len(theta_shape) > 2:
+            count_param = count_param.reshape(*theta_shape[:-1], count_param.shape[-1])
+
+        return count_param
 
     def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pyro.module("encoder", self.encoder, update_module_params=True)
+
+        # if we have more than one batch dimension, combine them all into one,
+        # as we can only work with 2D inputs in the neural networks
+        doc_shape = doc.shape
+        if len(doc_shape) > 2:
+            batch_size = int(np.prod(doc_shape[:-1]))
+            doc = doc.reshape(batch_size, doc_shape[-1])
+
         logtheta_loc, logtheta_logvar = self.encoder(doc).split(self.num_topics, -1)
         logtheta_scale = F.softplus(logtheta_logvar) + 1e-7
+
+        # convert the outputs of the neural network back to the batch
+        # dimensions we expect (if necessary)
+        if len(doc_shape) > 2:
+            logtheta_loc = logtheta_loc.reshape(*doc_shape[:-1], logtheta_loc.shape[-1])
+            logtheta_scale = logtheta_scale.reshape(
+                *doc_shape[:-1], logtheta_scale.shape[-1]
+            )
 
         return logtheta_loc, logtheta_scale
 
@@ -369,9 +436,10 @@ def train_model(
     target_names: Collection[str],
     min_epochs: int = 10,
     max_epochs: int = 250,
-    num_particles: int = 3,
-    initial_lr: float = 0.1,
-    gamma: float = 0.5,
+    num_particles: int = 1,
+    initial_lr: float = 0.09,
+    gamma: float = 0.25,
+    betas: tuple[float, float] = (0.3, 0.18),
     seed: int = 0,
     device: Optional[torch.device] = None,
     **kwargs,
@@ -397,6 +465,7 @@ def train_model(
         max_epochs=max_epochs,
         initial_lr=initial_lr,
         gamma=gamma,
+        betas=betas,
     )
 
     return prodslda.eval()
@@ -439,6 +508,11 @@ def retrain_model_cli():
         help="Whether to skip the cached train / test data, effectively forcing a re-generation.",
     )
     parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Whether to skip training and go directly to evaluation.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Whether to print various logs to the stdout during training.",
@@ -472,26 +546,35 @@ def retrain_model_cli():
         dtype=torch.float,
     )
 
-    prodslda = train_model(
-        data_loader,
-        vocab=data.train.words.tolist(),
-        id_label_dicts=[
-            {
-                id: label
-                for id, label in zip(
-                    data.train.target_data[field].uris,
-                    data.train.target_data[field].labels,
-                )
-            }
-            for field in train_targets.keys()
-        ],
-        target_names=list(data.train.target_data.keys()),
-        device=device,
-        seed=args.seed,
-        max_epochs=args.max_epochs,
-    )
+    suffix = "_".join(train_targets.keys())
 
-    save_model(prodslda, path, "_".join(train_targets.keys()))
+    if not args.eval_only:
+        prodslda = train_model(
+            data_loader,
+            vocab=data.train.words.tolist(),
+            id_label_dicts=[
+                {
+                    id: label
+                    for id, label in zip(
+                        data.train.target_data[field].uris,
+                        data.train.target_data[field].labels,
+                    )
+                }
+                for field in train_targets.keys()
+            ],
+            target_names=list(data.train.target_data.keys()),
+            device=device,
+            seed=args.seed,
+            max_epochs=args.max_epochs,
+        )
+
+        save_model(prodslda, path, suffix=suffix)
+    else:
+        try:
+            prodslda = load_model(ProdSLDA, path, device, suffix=suffix)
+        except FileNotFoundError:
+            prodslda = load_model(ProdSLDA, path, device)
+
     eval_sites = {key: f"probs_{i}" for i, key in enumerate(train_targets.keys())}
 
     run_evaluation(prodslda, data, eval_sites)
@@ -512,6 +595,7 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
         target_values=titles,
         eval_sites=eval_sites,
         cutoffs=None,
+        # cutoff_compute_method="base-rate",
     )
 
     if len(test_docs) > 0:
@@ -524,25 +608,25 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
             targets=test_targets,
             target_values=titles,
             eval_sites=eval_sites,
-            cutoffs={key: result.cutoff * 0.9 for key, result in results.items()},
+            cutoffs={key: result.cutoff for key, result in results.items()},
         )
 
-        print()
-        print("-----------------------------------------------------------")
-        print("evaluating model on test data, providing all other metadata")
-        for index, key in enumerate(titles.keys()):
-            targets_without_current = [test_docs] + [
-                targets if i != index else None
-                for i, targets in enumerate(test_targets.values())
-            ]
-            eval_model(
-                model,
-                *targets_without_current,
-                targets={key: test_targets[key]},
-                target_values={key: titles[key]},
-                eval_sites={key: eval_sites[key]},
-                cutoffs={key: result.cutoff * 0.9 for key, result in results.items()},
-            )
+        # print()
+        # print("-----------------------------------------------------------")
+        # print("evaluating model on test data, providing all other metadata")
+        # for index, key in enumerate(titles.keys()):
+        #     targets_without_current = [test_docs] + [
+        #         targets if i != index else None
+        #         for i, targets in enumerate(test_targets.values())
+        #     ]
+        #     eval_model(
+        #         model,
+        #         *targets_without_current,
+        #         targets={key: test_targets[key]},
+        #         target_values={key: titles[key]},
+        #         eval_sites={key: eval_sites[key]},
+        #         cutoffs={key: result.cutoff for key, result in results.items()},
+        #     )
 
 
 class Trial_Spec(NamedTuple):
@@ -562,6 +646,7 @@ def run_optuna_study(
     seed: int = 0,
     device: Optional[torch.device] = None,
     train_data_len: Optional[int] = None,
+    selected_field: Optional[str] = None,
     verbose=False,
 ):
     ic.enabled = verbose
@@ -586,19 +671,28 @@ def run_optuna_study(
     ic({key: value.sum(-2) for key, value in train_targets.items()})
 
     def get_eval_fun(
-        i: int, docs: torch.Tensor, targets: torch.Tensor
+        i: int,
+        docs: torch.Tensor,
+        targets: torch.Tensor,
+        attr: str,
+        num_samples: int = 250,
+        **kwargs,
     ) -> Callable[[ProdSLDA], float]:
         def fun(model: ProdSLDA) -> float:
-            val = ic(
-                model.calculate_metrics(
-                    docs,
-                    targets=targets,
-                    target_site=f"probs_{i}",
-                    num_samples=250,
-                    mean_dim=0,
-                    cutoff=None,
-                )
-            ).f1_score  # type: ignore
+            val = getattr(
+                ic(
+                    model.calculate_metrics(
+                        docs,
+                        targets=targets,
+                        target_site=f"probs_{i}",
+                        num_samples=num_samples,
+                        mean_dim=0,
+                        cutoff=None,
+                        **kwargs,
+                    )
+                ),
+                attr,
+            )  # type: ignore
             assert isinstance(val, float)
             return val
 
@@ -611,13 +705,31 @@ def run_optuna_study(
             *train_targets.values(),
             device=device,
             dtype=torch.float,
-            batch_size=4000,
+            batch_size=1000,
         ),
         elbo_choices={"TraceEnum": pyro.infer.TraceEnum_ELBO},
         eval_funs_final=[
-            get_eval_fun(i, test_docs, targets)
-            for i, targets in enumerate(test_targets.values())
+            get_eval_fun(
+                i,
+                test_docs,
+                targets,
+                "f1_score",
+                num_samples=250,
+                parallel_sample=False,
+            )
+            for i, (field, targets) in enumerate(test_targets.items())
+            if selected_field is None or field == selected_field
         ],
+        eval_fun_prune=lambda model, epoch, loss: get_eval_fun(
+            list(test_targets.keys()).index(selected_field),
+            test_docs,
+            test_targets[selected_field],
+            "f1_score",  # type: ignore
+            num_samples=10,
+            parallel_sample=True,
+        )(model)
+        if selected_field is not None
+        else None,
         fix_model_kwargs=trial_spec.fix_model_kwargs,
         var_model_kwargs=trial_spec.var_model_kwargs,
         num_particles=trial_spec.num_particles,
@@ -625,7 +737,7 @@ def run_optuna_study(
         max_epochs=trial_spec.max_epochs,
         initial_lr=trial_spec.initial_lr,
         vectorize_particles=False,
-        min_epochs=5,
+        min_epochs=30,
         device=device,
     )
 
@@ -636,11 +748,16 @@ def run_optuna_study(
         sampler = optuna.samplers.TPESampler(seed=seed)
 
     study = optuna.create_study(
-        study_name=trial_spec.name,
-        directions=["maximize" for _ in train_targets],
+        study_name=trial_spec.name
+        + ("" if selected_field is None else f"_{selected_field}"),
+        directions=[
+            "maximize"
+            for field in train_targets.keys()
+            if selected_field is None or field == selected_field
+        ],
         pruner=optuna.pruners.HyperbandPruner(),
         sampler=sampler,
-        storage=f"sqlite:///prodslda.db",
+        storage="sqlite:///prodslda.db",
         load_if_exists=True,
     )
     study.set_user_attr("labeled_data_size", len(train_docs))
@@ -648,7 +765,7 @@ def run_optuna_study(
     pyro.set_rng_seed(seed)
 
     try:
-        study.optimize(objective, n_trials=n_trials, catch=RuntimeError)
+        study.optimize(objective, n_trials=n_trials)
     except (KeyboardInterrupt, RuntimeError):
         pass
     finally:
@@ -683,14 +800,28 @@ def default_fix_model_kwargs(
         "dropout": 0.2,
         "nu_loc": -2.0,
         "nu_scale": 1.5,
+        "annealing_factor": 0.5,
         "target_scale": 1.0,
         "use_batch_normalization": True,
-        "mle_priors": True,
+        "mle_priors": False,
         "correlated_nus": False,
     }
 
 
 DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
+    "structure": lambda train_data, torch_data: Trial_Spec(
+        name="prodslda_encoder-structure",
+        fix_model_kwargs=default_fix_model_kwargs(train_data, torch_data),
+        var_model_kwargs={
+            "hid_size": lambda trial: trial.suggest_int("hid_size", 100, 1000),
+            "hid_num": lambda trial: trial.suggest_int("hid_num", 1, 3),
+            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500),
+        },
+        num_particles=lambda _: 1,
+        gamma=lambda _: 0.5,
+        initial_lr=lambda _: 0.1,
+        max_epochs=lambda _: 500,
+    ),
     "target_scale": lambda train_data, torch_data: Trial_Spec(
         name="prodslda_target-scale",
         fix_model_kwargs=default_fix_model_kwargs(train_data, torch_data)
@@ -733,21 +864,32 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
         initial_lr=lambda _: 0.1,
         max_epochs=lambda _: 500,
     ),
-    "all": lambda train_data, torch_data: Trial_Spec(
-        name="prodslda_all-f1",
+    "full": lambda train_data, torch_data: Trial_Spec(
+        name="prodslda_full",
         fix_model_kwargs=default_fix_model_kwargs(train_data, torch_data),
         var_model_kwargs={
-            "hid_size": lambda trial: trial.suggest_int("hid_size", 50, 500),
+            "hid_size": lambda trial: trial.suggest_int("hid_size", 50, 1000),
             "hid_num": lambda trial: trial.suggest_int("hid_num", 1, 3),
-            "num_topics": lambda trial: trial.suggest_int("num_topics", 50, 500),
+            "num_topics": lambda trial: trial.suggest_int("num_topics", 25, 500),
             "dropout": lambda trial: trial.suggest_float("dropout", 0.0, 0.9),
+            "annealing_factor": lambda trial: trial.suggest_float(
+                "annealing_factor", 1e-2, 1.0, log=True
+            ),
             "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10.0, 0.0),
             "nu_scale": lambda trial: trial.suggest_float("nu_scale", 0.1, 3, log=True),
+            "mle_priors": lambda trial: trial.suggest_categorical(
+                "mle_priors", [False, True]
+            ),
+            "correlated_nus": lambda trial: trial.suggest_categorical(
+                "correlated_nus", [False, True]
+            ),
         },
-        num_particles=lambda trial: trial.suggest_int("num_particles", 1, 7),
+        num_particles=lambda trial: 1,
         gamma=lambda trial: trial.suggest_float("gamma", 0.1, 1.0, log=True),
         max_epochs=lambda _: 500,
-        initial_lr=lambda trial: trial.suggest_float("initial_lr", 0.01, 1.0, log=True),
+        initial_lr=lambda trial: trial.suggest_float(
+            "initial_lr", 0.001, 0.1, log=True
+        ),
     ),
 }
 
@@ -760,6 +902,7 @@ def run_optuna_study_cli():
         help="The path to the directory containing the training data",
     )
     parser.add_argument("--trial-type", "-t", type=str, choices=DEFAULT_TRIALS.keys())
+    parser.add_argument("--target", type=str, default=None)
     parser.add_argument("--num-trials", type=int, default=25)
     parser.add_argument("-n", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -774,6 +917,7 @@ def run_optuna_study_cli():
         trial_spec_fun=DEFAULT_TRIALS[args.trial_type],
         n_trials=args.num_trials,
         train_data_len=args.n,
+        selected_field=args.target,
         device=device,
         verbose=args.verbose,
         seed=args.seed,
