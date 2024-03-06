@@ -1,16 +1,19 @@
-from functools import reduce
 from pathlib import Path
-from typing import NamedTuple, Optional, TypeVar
+from typing import NamedTuple, TypeVar
 
 import numpy as np
 import pyro
 import torch
-from data_utils.default_pipelines.data import BoW_Data, subset_data_points
+from data_utils.default_pipelines.data import (
+    BoW_Data,
+    Processed_Data,
+    balanced_split,
+    import_published,
+)
 from data_utils.default_pipelines.its_jointprobability import generate_data
 from data_utils.defaults import Fields
 
 from its_jointprobability.models.model import Model
-from its_jointprobability.utils import balanced_subset_mask
 
 
 class Split_Data(NamedTuple):
@@ -18,84 +21,50 @@ class Split_Data(NamedTuple):
     test: BoW_Data
 
 
-def make_data(
-    path: Path, n: Optional[int] = None, always_include_confirmed=True, seed=0, **kwargs
-) -> Split_Data:
-    # create the cache directory
-    nlp_cache = path / "nlp_cache"
+def make_data(data_dir: Path) -> Split_Data:
+    nlp_cache = data_dir / "nlp_cache"
     nlp_cache.mkdir(parents=True, exist_ok=True)
 
     data = generate_data(
-        path / "data.json",
+        data_dir / "data.json",
         target_fields=[
+            Fields.TAXONID.value,
             Fields.EDUCATIONAL_CONTEXT.value,
             Fields.INTENDED_ENDUSER.value,
-            Fields.TAXONID.value,
             Fields.TOPIC.value,
             Fields.LRT.value,
         ],
         cache_dir=nlp_cache,
-        **kwargs,
     )
 
-    split_data = split_train_test(data)
+    return Split_Data(
+        *balanced_split(
+            data, field=Fields.TAXONID.value, ratio=0.3, randomize=True, seed=0
+        )
+    )
 
-    def get_train_data(x: Split_Data):
-        return torch.tensor(x.train.target_data[Fields.TAXONID.value].arr)
 
-    # if the test data set is empty, create one from the training data
-    # by randomly taking 5% of the editorially confirmed materials
-    if len(split_data.test.editor_arr) == 0:
-        size = split_data.train.editor_arr.sum() // 20
-        editor_indices = np.where(split_data.train.editor_arr)[0]
-        rng = np.random.default_rng(seed=seed)
-        test_indices = rng.choice(editor_indices, size)
-        test_mask = np.zeros_like(split_data.train.editor_arr, dtype=bool)
-        test_mask[test_indices] = True
-
-        split_data = Split_Data(
-            train=subset_data_points(split_data.train, np.where(~test_mask)[0]),
-            test=subset_data_points(split_data.train, np.where(test_mask)[0]),
+def import_data(data_dir: Path) -> Split_Data:
+    data: list[Processed_Data] = list()
+    names = ["train", "test"]
+    for name in names:
+        data.append(
+            import_published(
+                data_file=data_dir / f"{name}_data.csv",
+                metadata_file=data_dir / f"{name}_metadata.csv",
+                processed_text_file=data_dir / f"{name}_processed_text.csv",
+            )
         )
 
-    kept = np.array(
-        balanced_subset_mask(
-            target=get_train_data(split_data), target_size_per_category=n
-        ),
-        dtype=bool,
+    # because the data does not come as bag of words, create this
+    # representation here
+    # collect all unique words from training and testing data
+    words = set().union(
+        *[set(doc) for sub_data in data for doc in sub_data.processed_texts]
     )
+    bow_data = [BoW_Data.from_processed_data(x, words) for x in data]
 
-    if always_include_confirmed:
-        kept = np.logical_or(kept, split_data.train.editor_arr)
-
-    print(
-        f"{np.logical_and(kept, ~split_data.train.editor_arr).sum()} / {kept.sum()} training materials have not been confirmed by editors"
-    )
-
-    return Split_Data(
-        train=subset_data_points(split_data.train, kept), test=split_data.test
-    )
-
-
-def split_train_test(data: BoW_Data) -> Split_Data:
-    test_indices = reduce(
-        np.logical_or,
-        [target_data.in_test_set for target_data in data.target_data.values()],
-        np.zeros_like(data.editor_arr, dtype=bool),
-    )
-
-    return Split_Data(
-        test=subset_data_points(data, np.where(test_indices)[0]),
-        train=subset_data_points(data, np.where(~test_indices)[0]),
-    )
-
-
-def save_data(path: Path, data: Split_Data):
-    torch.save(data, path / "data.pt")
-
-
-def load_data(path: Path) -> Split_Data:
-    return torch.load(path / "data.pt")
+    return Split_Data(*bow_data)
 
 
 Model_Subtype = TypeVar("Model_Subtype", bound=Model)

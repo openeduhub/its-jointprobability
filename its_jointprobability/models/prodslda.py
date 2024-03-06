@@ -15,14 +15,18 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from data_utils.default_pipelines.data import BoW_Data, subset_data_points
+from data_utils.default_pipelines.data import (
+    BoW_Data,
+    Data,
+    publish,
+    subset_data_points,
+)
 from icecream import ic
 from its_jointprobability.data import (
     Split_Data,
-    load_data,
+    import_data,
     load_model,
     make_data,
-    save_data,
     save_model,
 )
 from its_jointprobability.models.model import (
@@ -31,7 +35,6 @@ from its_jointprobability.models.model import (
     eval_model,
     set_up_optuna_study,
 )
-from its_jointprobability import utils
 from its_jointprobability.utils import Data_Loader, default_data_loader
 
 
@@ -526,11 +529,12 @@ def retrain_model_cli():
     try:
         if args.skip_cache:
             raise FileNotFoundError()
-        data = load_data(path)
+        data = import_data(path)
     except FileNotFoundError:
         print("Processed data not found. Generating it...")
-        data = make_data(path, always_include_confirmed=True, max_len=args.max_len)
-        save_data(path, data)
+        data = make_data(path)
+        publish(data.train, path, name="train")
+        publish(data.test, path, name="test")
 
     if not args.include_unconfirmed:
         train_data = subset_data_points(data.train, np.where(data.train.editor_arr)[0])
@@ -641,7 +645,7 @@ class Trial_Spec(NamedTuple):
 
 def run_optuna_study(
     path: Path,
-    trial_spec_fun: Callable[[BoW_Data, Torch_Data], Trial_Spec],
+    trial_spec_fun: Callable[[Data, Torch_Data], Trial_Spec],
     n_trials=25,
     seed: int = 0,
     device: Optional[torch.device] = None,
@@ -651,7 +655,7 @@ def run_optuna_study(
 ):
     ic.enabled = verbose
 
-    data = load_data(path)
+    data = import_data(path)
     # only use editorially confirmed data for hyper-parameter tuning
     data = Split_Data(
         subset_data_points(data.train, np.where(data.train.editor_arr)[0]), data.test
