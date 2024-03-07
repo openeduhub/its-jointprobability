@@ -15,12 +15,7 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from data_utils.default_pipelines.data import (
-    BoW_Data,
-    Data,
-    publish,
-    subset_data_points,
-)
+from data_utils.default_pipelines.data import BoW_Data, publish, subset_data_points
 from icecream import ic
 from its_jointprobability.data import (
     Split_Data,
@@ -32,10 +27,14 @@ from its_jointprobability.data import (
 from its_jointprobability.models.model import (
     Model,
     Simple_Model,
-    eval_model,
+    eval_samples,
     set_up_optuna_study,
 )
-from its_jointprobability.utils import Data_Loader, default_data_loader
+from its_jointprobability.utils import (
+    Data_Loader,
+    default_data_loader,
+    sequential_data_loader,
+)
 
 
 class ProdSLDA(Model):
@@ -48,11 +47,11 @@ class ProdSLDA(Model):
         vocab: Sequence[str],
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
-        num_topics: int = 217,
+        num_topics: int = 256,
         cov_rank: Optional[int] = None,
-        hid_size: int = 923,
+        hid_size: int = 512,
         hid_num: int = 1,
-        dropout: float = 0.57,
+        dropout: float = 0.6,
         nu_loc: float = -6.7,
         nu_scale: float = 0.85,
         target_scale: Optional[float] = 1.0,
@@ -71,14 +70,15 @@ class ProdSLDA(Model):
         # dynamically set the return sites
         vocab_size = len(vocab)
         target_sizes = [len(id_label_dict) for id_label_dict in id_label_dicts]
-        ns = list(range(len(target_sizes)))
 
         self.return_sites = tuple(
-            [f"target_{i}" for i in ns] + [f"probs_{i}" for i in ns] + ["nu", "a"]
+            [f"target_{label}" for label in target_names]
+            + [f"probs_{label}" for label in target_names]
+            + ["nu", "a"]
         )
         self.return_site_cat_dim = (
-            {f"target_{i}": -2 for i in ns}
-            | {f"probs_{i}": -2 for i in ns}
+            {f"target_{label}": -2 for label in target_names}
+            | {f"probs_{label}": -2 for label in target_names}
             | {"nu": -4, "a": -2}
         )
 
@@ -97,7 +97,7 @@ class ProdSLDA(Model):
         self.vocab = vocab
         self.vocab_size = vocab_size
         self.id_label_dicts = id_label_dicts
-        self.target_names = target_names
+        self.target_names = list(target_names)
         self.target_sizes = target_sizes
         self.num_topics = num_topics
         self.cov_rank = (
@@ -124,7 +124,7 @@ class ProdSLDA(Model):
             nn.Linear(hid_size, vocab_size),
         )
         if use_batch_normalization:
-            self.decoder.append(nn.BatchNorm1d(vocab_size, affine=True))
+            self.decoder.append(nn.BatchNorm1d(vocab_size, affine=False))
         self.decoder.append(nn.Softmax(-1))
 
         # define the encoder, which takes word probabilities
@@ -142,7 +142,7 @@ class ProdSLDA(Model):
         self.encoder.append(nn.Dropout(dropout))
         self.encoder.append(nn.Linear(prev_hid_size, num_topics * 2))
         if use_batch_normalization:
-            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=True))
+            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
 
         self.to(device)
         ic(self)
@@ -210,13 +210,12 @@ class ProdSLDA(Model):
             theta = F.softmax(logtheta, -1)
             ic(theta.shape)
 
-        # get each document's word distribution from the decoder.
-        # we write this outside the document plate because the nn
-        # can only handle two-dimensional inputs
-        count_param = self.count_param(theta)
-        ic(count_param.shape)
+            # get each document's word distribution from the decoder.
+            # we write this outside the document plate because the nn
+            # can only handle two-dimensional inputs
+            count_param = self.count_param(theta)
+            ic(count_param.shape)
 
-        with docs_plate:
             # the distribution of the actual document contents.
             # Currently, PyTorch Multinomial requires `total_count` to be
             # homogeneous. Because the numbers of words across documents can
@@ -239,7 +238,7 @@ class ProdSLDA(Model):
                 ic(a.shape)
 
             probs_col = [
-                pyro.deterministic(f"probs_{i}", F.sigmoid(a_local))
+                pyro.deterministic(f"probs_{self.target_names[i]}", F.sigmoid(a_local))
                 for i, a_local in enumerate(a.split(self.target_sizes, -1))
             ]
 
@@ -251,7 +250,7 @@ class ProdSLDA(Model):
                         obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
                         ic(probs.shape)
                         target = pyro.sample(
-                            f"target_{i}",
+                            f"target_{self.target_names[i]}",
                             dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
                             obs=targets_i.swapaxes(-1, -2)
                             if targets_i is not None
@@ -347,7 +346,7 @@ class ProdSLDA(Model):
                             probs_q.squeeze_(-3)
                         ic(probs_q.shape)
                         target_q = pyro.sample(
-                            f"target_{i}_unobserved",
+                            f"target_{self.target_names[i]}_unobserved",
                             dist.Bernoulli(probs_q.swapaxes(-1, -2)),  # type: ignore
                             infer={"enumerate": "parallel"},
                         ).swapaxes(-1, -2)
@@ -406,6 +405,29 @@ class ProdSLDA(Model):
         return [
             target.sum(-1) > 0 if target is not None else None for target in targets
         ]
+
+    def predict(self, *data: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Return samples of the probabilities for each predicted target's
+        categories.
+
+        Note that the returned tensors are on the CPU, regardless of the
+        primary device used.
+        """
+        samples = self.draw_posterior_samples(
+            data_loader=sequential_data_loader(
+                *data,
+                device=self.device,
+                batch_size=512,
+                dtype=torch.float,
+            ),
+            return_sites=[site for site in self.return_sites if "probs_" == site[:6]],
+            num_samples=100,
+        )
+        # re-key the samples such that only the target names are left
+        samples = {key[6:]: value for key, value in samples.items()}
+
+        return samples
 
 
 class Torch_Data(NamedTuple):
@@ -550,7 +572,7 @@ def retrain_model_cli():
         dtype=torch.float,
     )
 
-    suffix = "_".join(train_targets.keys())
+    suffix = "_".join(sorted(list(train_targets.keys())))
 
     if not args.eval_only:
         prodslda = train_model(
@@ -574,17 +596,17 @@ def retrain_model_cli():
 
         save_model(prodslda, path, suffix=suffix)
     else:
-        try:
-            prodslda = load_model(ProdSLDA, path, device, suffix=suffix)
-        except FileNotFoundError:
-            prodslda = load_model(ProdSLDA, path, device)
+        # try:
+        prodslda = load_model(ProdSLDA, path, device, suffix=suffix)
+        # except FileNotFoundError:
+        #     prodslda = load_model(ProdSLDA, path, device)
 
-    eval_sites = {key: f"probs_{i}" for i, key in enumerate(train_targets.keys())}
+    eval_sites = {key: f"probs_{key}" for key in train_targets.keys()}
 
     run_evaluation(prodslda, data, eval_sites)
 
 
-def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, str]):
+def run_evaluation(model: ProdSLDA, data: Split_Data, eval_sites: dict[str, str]):
     train_docs, train_targets, test_docs, test_targets = set_up_data(data)
     titles = {key: value.labels for key, value in data.train.target_data.items()}
 
@@ -592,12 +614,10 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
     print()
     print("------------------------------")
     print("evaluating model on train data")
-    results = eval_model(
-        model,
-        train_docs,
+    results = eval_samples(
+        target_samples=model.predict(train_docs),
         targets=train_targets,
         target_values=titles,
-        eval_sites=eval_sites,
         cutoffs=None,
         # cutoff_compute_method="base-rate",
     )
@@ -606,12 +626,10 @@ def run_evaluation(model: Simple_Model, data: Split_Data, eval_sites: dict[str, 
         print()
         print("-----------------------------")
         print("evaluating model on test data")
-        eval_model(
-            model,
-            test_docs,
+        eval_samples(
+            target_samples=model.predict(test_docs),
             targets=test_targets,
             target_values=titles,
-            eval_sites=eval_sites,
             cutoffs={key: result.cutoff for key, result in results.items()},
         )
 
@@ -645,7 +663,7 @@ class Trial_Spec(NamedTuple):
 
 def run_optuna_study(
     path: Path,
-    trial_spec_fun: Callable[[Data, Torch_Data], Trial_Spec],
+    trial_spec_fun: Callable[[BoW_Data, Torch_Data], Trial_Spec],
     n_trials=25,
     seed: int = 0,
     device: Optional[torch.device] = None,
@@ -675,7 +693,7 @@ def run_optuna_study(
     ic({key: value.sum(-2) for key, value in train_targets.items()})
 
     def get_eval_fun(
-        i: int,
+        field: str,
         docs: torch.Tensor,
         targets: torch.Tensor,
         attr: str,
@@ -688,7 +706,7 @@ def run_optuna_study(
                     model.calculate_metrics(
                         docs,
                         targets=targets,
-                        target_site=f"probs_{i}",
+                        target_site=f"probs_{field}",
                         num_samples=num_samples,
                         mean_dim=0,
                         cutoff=None,
@@ -714,18 +732,18 @@ def run_optuna_study(
         elbo_choices={"TraceEnum": pyro.infer.TraceEnum_ELBO},
         eval_funs_final=[
             get_eval_fun(
-                i,
+                field,
                 test_docs,
                 targets,
                 "f1_score",
                 num_samples=250,
                 parallel_sample=False,
             )
-            for i, (field, targets) in enumerate(test_targets.items())
+            for field, targets in test_targets.items()
             if selected_field is None or field == selected_field
         ],
         eval_fun_prune=lambda model, epoch, loss: get_eval_fun(
-            list(test_targets.keys()).index(selected_field),
+            selected_field,
             test_docs,
             test_targets[selected_field],
             "f1_score",  # type: ignore

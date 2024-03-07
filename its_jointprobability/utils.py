@@ -14,7 +14,7 @@ from nlprep import Collection, partial, tokenize_documents
 from pydantic import BaseModel
 
 T = TypeVar("T")
-MAX_BATCH_SIZE = 1000
+MAX_BATCH_SIZE = 512
 
 
 def balanced_subset_mask(
@@ -276,6 +276,8 @@ def quality_measures(
     use_median: bool = False,
 ) -> Quality_Result:
     """Compute quality metrics for a given set of predictions and their true values."""
+    # ensure that the samples and targets are on the same torch device
+    targets = targets.to(samples.device)
     samples = (
         samples
         if mean_dim is None

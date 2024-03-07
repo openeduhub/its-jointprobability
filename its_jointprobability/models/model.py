@@ -235,9 +235,9 @@ class Simple_Model:
             raise ValueError("Cannot sample for empty data!")
 
         # move the posterior samples back to the original device, now that they have been collected
-        posterior_samples = {
-            key: tensor.to(self.device) for key, tensor in posterior_samples.items()
-        }
+        # posterior_samples = {
+        #     key: tensor.to(self.device) for key, tensor in posterior_samples.items()
+        # }
 
         return self.clean_up_posterior_samples(posterior_samples)
 
@@ -461,24 +461,22 @@ def set_up_optuna_study(
 Post_Sample_Fun = Callable[[torch.Tensor], torch.Tensor]
 
 
-def eval_model(
-    model: Simple_Model,
-    *data: torch.Tensor | None,
-    targets: torch.Tensor | dict[str, torch.Tensor],
-    target_values: Iterable | dict[str, Iterable],
-    eval_sites: str | dict[str, str],
+def eval_samples(
+    target_samples: torch.Tensor | Mapping[str, torch.Tensor],
+    targets: torch.Tensor | Mapping[str, torch.Tensor],
+    target_values: Iterable | Mapping[str, Iterable],
     cutoffs: Optional[
         float | Collection[float] | Mapping[str, None | float | Collection[float]]
     ],
     cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
-    post_sample_funs: Post_Sample_Fun | dict[str, Post_Sample_Fun] | None = None,
+    post_sample_funs: Post_Sample_Fun | Mapping[str, Post_Sample_Fun] | None = None,
 ) -> dict[str, Quality_Result]:
+    if not isinstance(target_samples, Mapping):
+        target_samples = {"": target_samples}
     if not isinstance(targets, Mapping):
         targets = {"": targets}
     if not isinstance(target_values, Mapping):
         target_values = {key: target_values for key in targets.keys()}
-    if not isinstance(eval_sites, Mapping):
-        eval_sites = {key: eval_sites for key in targets.keys()}
     if not isinstance(cutoffs, Mapping):
         cutoffs = {key: cutoffs for key in targets.keys()}
     if not isinstance(post_sample_funs, Mapping):
@@ -488,19 +486,9 @@ def eval_model(
             else {}
         )
 
-    samples_by_key = model.draw_posterior_samples(
-        data_loader=sequential_data_loader(
-            *data,
-            device=model.device,
-            batch_size=1000,
-            dtype=torch.float,
-        ),
-        return_sites=list(eval_sites.values()),
-        num_samples=100,
-    )
-
     results = dict()
-    for (key, target), samples in zip(targets.items(), samples_by_key.values()):
+    for key, target in targets.items():
+        samples = target_samples[key]
         if key in post_sample_funs:
             samples = post_sample_funs[key](samples)
 
@@ -508,7 +496,7 @@ def eval_model(
         print(key)
         global_measures = quality_measures(
             samples,
-            target.to(model.device).float(),
+            target.to(samples.device).float(),
             mean_dim=0,
             cutoff=cutoffs[key],
             cutoff_compute_method=cutoff_compute_method,
@@ -518,7 +506,7 @@ def eval_model(
 
         by_discipline = quality_measures(
             samples,
-            target.to(model.device).float(),
+            target.to(samples.device).float(),
             mean_dim=0,
             cutoff=global_measures.cutoff,
             parallel_dim=-1,
