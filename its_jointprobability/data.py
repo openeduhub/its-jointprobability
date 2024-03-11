@@ -59,10 +59,17 @@ def import_data(data_dir: Path) -> Split_Data:
     # because the data does not come as bag of words, create this
     # representation here
     # collect all unique words from training and testing data
-    words = set().union(
+    words: set[str] = set().union(
         *[set(doc) for sub_data in data for doc in sub_data.processed_texts]
     )
-    bow_data = [BoW_Data.from_processed_data(x, words) for x in data]
+    bow_data = [
+        BoW_Data.from_processed_data(
+            x,
+            # pass the sorted word list to make this deterministic
+            sorted(list(words)),
+        )
+        for x in data
+    ]
 
     return Split_Data(*bow_data)
 
@@ -85,6 +92,7 @@ def load_model(
     cls_name = model_class.__name__
     if suffix:
         cls_name += f"_{suffix}"
+
     pyro.get_param_store().load(path / f"{cls_name}_pyro.pt", map_location=device)
 
     kwargs = torch.load(path / f"{cls_name}_kwargs.pt", map_location=device)
