@@ -520,7 +520,7 @@ def eval_samples(
         df["taxonid"] = target_values[key]
         df["count"] = target.sum(-2).cpu()
         df = df.set_index("taxonid")
-        print(df.sort_values("f1_score", ascending=False))
+        print(df.sort_values("f1_score", ascending=False).to_string())
 
         results[key] = by_discipline
 
