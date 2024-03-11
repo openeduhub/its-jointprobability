@@ -24,12 +24,7 @@ from its_jointprobability.data import (
     make_data,
     save_model,
 )
-from its_jointprobability.models.model import (
-    Model,
-    Simple_Model,
-    eval_samples,
-    set_up_optuna_study,
-)
+from its_jointprobability.models.model import Model, eval_samples, set_up_optuna_study
 from its_jointprobability.utils import (
     Data_Loader,
     default_data_loader,
@@ -44,21 +39,29 @@ class ProdSLDA(Model):
 
     def __init__(
         self,
+        # data
         vocab: Sequence[str],
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
-        num_topics: int = 256,
-        cov_rank: Optional[int] = None,
-        hid_size: int = 512,
-        hid_num: int = 1,
-        dropout: float = 0.6,
+        # model settings
+        num_topics: int = 217,
         nu_loc: float = -6.7,
         nu_scale: float = 0.85,
+        correlated_nus: bool = False,
+        cov_rank: Optional[int] = None,
+        mle_priors: bool = True,
+        # variational auto-encoder settings
+        # we can set the hidden dimension as high as we want without risking
+        # overfitting, as the neural networks are mapping to the variational
+        # parameters; NOT the actual predictions
+        hid_size: int = 1000,
+        hid_num: int = 1,
         target_scale: Optional[float] = 1.0,
         annealing_factor: float = 0.012,
+        dropout: float = 0.6,
         use_batch_normalization: bool = True,
-        correlated_nus: bool = False,
-        mle_priors: bool = True,
+        affine_batch_normalization: bool = False,
+        # the torch device to run on
         device: Optional[torch.device] = None,
     ):
         # save the given arguments so that they can be exported later
@@ -110,10 +113,13 @@ class ProdSLDA(Model):
         self.dropout = dropout
         self.nu_loc = float(nu_loc)
         self.nu_scale = float(nu_scale)
-        self.use_batch_normalization = use_batch_normalization
         self.correlated_nus = correlated_nus
         self.mle_priors = mle_priors
         self.device = device
+
+        # define the variational auto-encoder networks.
+        # to avoid component collapse in the neural networks, apply dropout
+        # and batch normalization
 
         # define the decoder, which takes topic mixtures
         # and returns word probabilities.
@@ -124,7 +130,9 @@ class ProdSLDA(Model):
             nn.Linear(hid_size, vocab_size),
         )
         if use_batch_normalization:
-            self.decoder.append(nn.BatchNorm1d(vocab_size, affine=False))
+            self.decoder.append(
+                nn.BatchNorm1d(vocab_size, affine=affine_batch_normalization)
+            )
         self.decoder.append(nn.Softmax(-1))
 
         # define the encoder, which takes word probabilities
@@ -142,7 +150,9 @@ class ProdSLDA(Model):
         self.encoder.append(nn.Dropout(dropout))
         self.encoder.append(nn.Linear(prev_hid_size, num_topics * 2))
         if use_batch_normalization:
-            self.encoder.append(nn.BatchNorm1d(num_topics * 2, affine=False))
+            self.encoder.append(
+                nn.BatchNorm1d(num_topics * 2, affine=affine_batch_normalization)
+            )
 
         self.to(device)
         ic(self)
@@ -204,7 +214,6 @@ class ProdSLDA(Model):
                 logtheta = pyro.sample(
                     "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
                 )
-            ic(logtheta.shape)
             # if len(logtheta.shape) > 2:
             #     logtheta = logtheta.squeeze(0)
             theta = F.softmax(logtheta, -1)
@@ -315,7 +324,6 @@ class ProdSLDA(Model):
                 logtheta_q = pyro.sample(
                     "logtheta", dist.Normal(*self.logtheta_params(docs)).to_event(1)
                 )
-            ic(logtheta_q.shape)
             theta_q = F.softmax(logtheta_q, -1)
             ic(theta_q.shape)
 
@@ -353,7 +361,7 @@ class ProdSLDA(Model):
                         ic(target_q.shape)
 
     def count_param(self, theta: torch.Tensor) -> torch.Tensor:
-        pyro.module("decoder", self.decoder, update_module_params=True)
+        pyro.module("decoder", self.decoder)
         # if we have more than one batch dimension, combine them all into one,
         # as we can only work with 2D inputs in the neural networks
         theta_shape = theta.shape
@@ -371,7 +379,7 @@ class ProdSLDA(Model):
         return count_param
 
     def logtheta_params(self, doc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        pyro.module("encoder", self.encoder, update_module_params=True)
+        pyro.module("encoder", self.encoder)
 
         # if we have more than one batch dimension, combine them all into one,
         # as we can only work with 2D inputs in the neural networks
@@ -422,10 +430,11 @@ class ProdSLDA(Model):
                 dtype=torch.float,
             ),
             return_sites=[site for site in self.return_sites if "probs_" == site[:6]],
-            num_samples=100,
+            num_samples=1000,
         )
         # re-key the samples such that only the target names are left
         samples = {key[6:]: value for key, value in samples.items()}
+        print(list(samples.values())[0].mean(0)[0])
 
         return samples
 
@@ -460,7 +469,7 @@ def train_model(
     id_label_dicts: Collection[dict[str, str]],
     target_names: Collection[str],
     min_epochs: int = 10,
-    max_epochs: int = 250,
+    max_epochs: int = 1000,
     num_particles: int = 1,
     initial_lr: float = 0.09,
     gamma: float = 0.25,
@@ -505,6 +514,12 @@ def retrain_model_cli():
         help="The path to the directory containing the training data",
     )
     parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="The name to identify the trained model with; used for storing / loading its relevant files.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=0,
@@ -513,7 +528,7 @@ def retrain_model_cli():
     parser.add_argument(
         "--max-epochs",
         type=int,
-        default=500,
+        default=1000,
         help="The maximum number of training epochs per batch of data",
     )
     parser.add_argument(
@@ -572,7 +587,11 @@ def retrain_model_cli():
         dtype=torch.float,
     )
 
-    suffix = "_".join(sorted(list(train_targets.keys())))
+    suffix = (
+        "_".join(sorted(list(train_targets.keys())))
+        if args.model_name is None
+        else args.model_name
+    )
 
     if not args.eval_only:
         prodslda = train_model(
