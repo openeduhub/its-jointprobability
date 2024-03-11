@@ -101,15 +101,9 @@ class Simple_Model:
             self.losses = list()
 
         # get the number of mini-batches and total number of data points,
-        # so that we can correctly scale the ELBO of each mini-batch
-        # and correct the learning rate decay
+        # so that we can calculate the learning rate decay
         one_epoch = batch_to_list(data_loader)
         batches_per_epoch = len(one_epoch)
-        n = 0
-        for batch in one_epoch:
-            n += get_batch_size(batch)
-
-        assert n > 0
 
         # set the per-step learning rate decay such that after 100 epochs,
         # we have multiplied the learning rate with gamma
@@ -142,12 +136,15 @@ class Simple_Model:
                 self.annealing_factor = float(annealing_factors[epoch])
             else:
                 self.annealing_factor = 1.0
+
+            # apply the batch-wise SVI steps
             batch_losses = list()
             for last_batch_in_epoch, batch in data_loader:
+                # scale by the batch size, as the ELBO is proportional to the
+                # number of data points
                 batch_size = get_batch_size(batch)
-                with pyro.poutine.scale(scale=n / batch_size):
+                with pyro.poutine.scale(scale=1.0 / batch_size):
                     batch_losses.append(svi.step(*batch))
-                # break if this was the last batch
                 if last_batch_in_epoch:
                     break
 
