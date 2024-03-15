@@ -11,11 +11,18 @@ import optuna
 import pyro
 import pyro.distributions as dist
 import pyro.infer
+import pyro.nn
 import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from data_utils.default_pipelines.data import BoW_Data, publish, subset_data_points
+from data_utils.default_pipelines.data import (
+    BoW_Data,
+    balanced_split,
+    publish,
+    subset_data_points,
+)
+from data_utils.defaults import Fields
 from icecream import ic
 from its_jointprobability.data import (
     Split_Data,
@@ -44,7 +51,7 @@ class ProdSLDA(Model):
         id_label_dicts: Collection[dict[str, str]],
         target_names: Collection[str],
         # model settings
-        num_topics: int = 217,
+        num_topics: int = 500,
         nu_loc: float = -6.7,
         nu_scale: float = 0.85,
         correlated_nus: bool = False,
@@ -131,7 +138,11 @@ class ProdSLDA(Model):
         )
         if use_batch_normalization:
             self.decoder.append(
-                nn.BatchNorm1d(vocab_size, affine=affine_batch_normalization)
+                nn.BatchNorm1d(
+                    vocab_size,
+                    affine=affine_batch_normalization,
+                    track_running_stats=False,
+                )
             )
         self.decoder.append(nn.Softmax(-1))
 
@@ -151,7 +162,11 @@ class ProdSLDA(Model):
         self.encoder.append(nn.Linear(prev_hid_size, num_topics * 2))
         if use_batch_normalization:
             self.encoder.append(
-                nn.BatchNorm1d(num_topics * 2, affine=affine_batch_normalization)
+                nn.BatchNorm1d(
+                    num_topics * 2,
+                    affine=affine_batch_normalization,
+                    track_running_stats=False,
+                )
             )
 
         self.to(device)
@@ -430,11 +445,10 @@ class ProdSLDA(Model):
                 dtype=torch.float,
             ),
             return_sites=[site for site in self.return_sites if "probs_" == site[:6]],
-            num_samples=1000,
+            num_samples=100,
         )
         # re-key the samples such that only the target names are left
         samples = {key[6:]: value for key, value in samples.items()}
-        print(list(samples.values())[0].mean(0)[0])
 
         return samples
 
