@@ -81,9 +81,17 @@ def save_model(model: Model, path: Path, suffix: str = ""):
     cls_name = model.__class__.__name__
     if suffix:
         cls_name += f"_{suffix}"
+
+    # remove neural network parameters from pyro store
+    param_store = pyro.get_param_store()
+    for key in list(param_store.keys()):
+        if "encoder" in key or "decoder" in key:
+            del param_store[key]
+
+    # save the various states to json
     torch.save(model.args, path / f"{cls_name}_kwargs.pt")
     torch.save(model.state_dict(), path / f"{cls_name}_state.pt")
-    pyro.get_param_store().save(path / f"{cls_name}_pyro.pt")
+    param_store.save(path / f"{cls_name}_pyro.pt")
 
 
 def load_model(
@@ -93,12 +101,13 @@ def load_model(
     if suffix:
         cls_name += f"_{suffix}"
 
+    # load data
     pyro.get_param_store().load(path / f"{cls_name}_pyro.pt", map_location=device)
-
     kwargs = torch.load(path / f"{cls_name}_kwargs.pt", map_location=device)
     state_dict = torch.load(path / f"{cls_name}_state.pt", map_location=device)
-    model = model_class(device=device, **kwargs)
 
+    # initialize model
+    model = model_class(device=device, **kwargs)
     model.load_state_dict(state_dict)
 
     # ensure that the imported model is in evaluation mode
