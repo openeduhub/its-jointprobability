@@ -100,6 +100,16 @@
           ++ (python-packages-build py-pkgs);
 
         ### create the python package
+        # download the model from gitlab
+        # cannot be moved to inputs due to git LFS
+        model = pkgs-without-cuda.fetchFromGitLab {
+          domain = "gitlab.gwdg.de";
+          owner = "jopitz";
+          repo = "its-jointprobability-model";
+          rev = "3aa0ebde541c6a857c87a93e8bb6ea9961db9ce1";
+          hash = "sha256-6xqTL5432MKrTuVGmXJHg0ZHcCkSS0BSkHaygWzKQko=";
+        };
+
         python-pkg-lib = pkgs: py-pkgs: py-pkgs.buildPythonPackage {
           pname = "its-jointprobability";
           version = "0.2.0";
@@ -120,7 +130,7 @@
           };
           prePatch = ''
             substituteInPlace its_jointprobability/*.py \
-              --replace "Path.cwd() / \"data\"" "Path(\"${./data}\")"
+              --replace "Path.cwd() / \"data\"" "Path(\"${model}\")"
           '';
           propagatedBuildInputs =
             (python-packages-build py-pkgs)
