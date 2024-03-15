@@ -532,10 +532,10 @@ def retrain_model_cli():
         help="The maximum number of training epochs per batch of data",
     )
     parser.add_argument(
-        "--max-len",
-        type=int,
+        "--train-ratio",
+        type=float,
         default=None,
-        help="The maximum number of training documents",
+        help="The amount of training data to use",
     )
     parser.add_argument(
         "--include-unconfirmed",
@@ -551,6 +551,12 @@ def retrain_model_cli():
         "--eval-only",
         action="store_true",
         help="Whether to skip training and go directly to evaluation.",
+    )
+    parser.add_argument(
+        "--memory",
+        type=int,
+        help="The amount of available (V)RAM, in MB. Note that this directly affects the batch-size and thus the training duration. If training crashes due to too little memory, reduce this.",
+        default=5 * 1024,
     )
     parser.add_argument(
         "--verbose",
@@ -577,14 +583,39 @@ def retrain_model_cli():
         train_data = subset_data_points(data.train, np.where(data.train.editor_arr)[0])
         data = Split_Data(train_data, data.test)
 
+    if args.train_ratio is not None and not args.train_ratio == 1.0:
+        train_data, _ = balanced_split(
+            data.train, field=Fields.TAXONID.value, ratio=1 - args.train_ratio
+        )
+        data = Split_Data(train_data, data.test)
+
     train_docs, train_targets, _, _ = set_up_data(data)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # set the batch size such that the batch should fit into the given memory
+    # size.
+    batch_size = min(
+        len(train_docs),
+        int(
+            args.memory
+            * (1024**2)
+            / (
+                1.2
+                * train_docs.shape[-1]
+                * sum(
+                    targets.arr.shape[-1] for targets in data.train.target_data.values()
+                )
+            )
+        ),
+    )
+    ic(batch_size)
     data_loader = default_data_loader(
         train_docs,
         *train_targets.values(),
         device=device,
         dtype=torch.float,
+        batch_size=batch_size,
     )
 
     suffix = (
@@ -607,7 +638,7 @@ def retrain_model_cli():
                 }
                 for field in train_targets.keys()
             ],
-            target_names=list(data.train.target_data.keys()),
+            target_names=list(train_targets.keys()),
             device=device,
             seed=args.seed,
             max_epochs=args.max_epochs,
