@@ -8,7 +8,7 @@ A Bayesian approach to generating metadata for educational materials.
 
 This project is primarily intended to be used as a microservice through the ~nix~ package. Additionally, it includes some CLI utilities in order to (re-) train the model for some data (data not included).
 
-* Utils :oexport:
+* Utils :noexport:
 #+name: format-json
 #+begin_src shell sh :var result="" :results verbatim
 echo $result | json
