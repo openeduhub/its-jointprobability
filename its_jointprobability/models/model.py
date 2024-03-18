@@ -249,11 +249,14 @@ class Simple_Model:
         bow_tensor = texts_to_bow_tensor(*texts, tokens=tokens).int()
         ic(bow_tensor)
         ic(torch.arange(len(tokens)).repeat_interleave(bow_tensor[0]))
+
+        bow_tensor = bow_tensor.expand([num_samples * bow_tensor.shape[-2], -1])
+
         return self.draw_posterior_samples(
             data_loader=sequential_data_loader(
                 bow_tensor, device=self.device, dtype=torch.float
             ),
-            num_samples=num_samples,
+            num_samples=1,
             return_sites=return_sites,
         )
 
