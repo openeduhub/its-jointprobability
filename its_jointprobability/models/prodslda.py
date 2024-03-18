@@ -141,7 +141,7 @@ class ProdSLDA(Model):
                 nn.BatchNorm1d(
                     vocab_size,
                     affine=affine_batch_normalization,
-                    track_running_stats=False,
+                    track_running_stats=True,
                 )
             )
         self.decoder.append(nn.Softmax(-1))
@@ -165,7 +165,7 @@ class ProdSLDA(Model):
                 nn.BatchNorm1d(
                     num_topics * 2,
                     affine=affine_batch_normalization,
-                    track_running_stats=False,
+                    track_running_stats=True,
                 )
             )
 

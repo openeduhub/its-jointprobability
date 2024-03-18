@@ -16,6 +16,15 @@
       inputs = {
         flake-utils.follows = "flake-utils";
         nixpkgs.follows = "nixpkgs";
+        nix-filter.follows = "nix-filter";
+      };
+    };
+    model = {
+      url = "gitlab:jopitz/its-jointprobability-model?host=gitlab.gwdg.de";
+      inputs = {
+        flake-utils.follows = "flake-utils";
+        nixpkgs.follows = "nixpkgs";
+        nix-filter.follows = "nix-filter";
       };
     };
   };
@@ -102,13 +111,13 @@
         ### create the python package
         # download the model from gitlab
         # cannot be moved to inputs due to git LFS
-        model = pkgs-without-cuda.fetchFromGitLab {
-          domain = "gitlab.gwdg.de";
-          owner = "jopitz";
-          repo = "its-jointprobability-model";
-          rev = "3aa0ebde541c6a857c87a93e8bb6ea9961db9ce1";
-          hash = "sha256-6xqTL5432MKrTuVGmXJHg0ZHcCkSS0BSkHaygWzKQko=";
-        };
+        # model = pkgs-without-cuda.fetchFromGitLab {
+        #   domain = "gitlab.gwdg.de";
+        #   owner = "jopitz";
+        #   repo = "its-jointprobability-model";
+        #   rev = "3aa0ebde541c6a857c87a93e8bb6ea9961db9ce1";
+        #   hash = "sha256-6xqTL5432MKrTuVGmXJHg0ZHcCkSS0BSkHaygWzKQko=";
+        # };
 
         python-pkg-lib = pkgs: py-pkgs: py-pkgs.buildPythonPackage {
           pname = "its-jointprobability";
@@ -130,7 +139,7 @@
           };
           prePatch = ''
             substituteInPlace its_jointprobability/*.py \
-              --replace "Path.cwd() / \"data\"" "Path(\"${model}\")"
+              --replace "Path.cwd() / \"data\"" "Path(\"${self.inputs.model.packages.${system}.its-jointprobability-model}\")"
           '';
           propagatedBuildInputs =
             (python-packages-build py-pkgs)

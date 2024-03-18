@@ -6,7 +6,7 @@
           "openapi-checks",
           "flake-utils"
         ],
-        "nix-filter": "nix-filter_4",
+        "nix-filter": "nix-filter_3",
         "nixpkgs": [
           "openapi-checks",
           "nixpkgs"
@@ -31,7 +31,9 @@
         "flake-utils": [
           "flake-utils"
         ],
-        "nix-filter": "nix-filter",
+        "nix-filter": [
+          "nix-filter"
+        ],
         "nixpkgs": [
           "nixpkgs"
         ],
@@ -87,6 +89,34 @@
         "type": "github"
       }
     },
+    "model": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nix-filter": [
+          "nix-filter"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "host": "gitlab.gwdg.de",
+        "lastModified": 1710759129,
+        "narHash": "sha256-YotkxkXrYnT3h/Q4Cyk4VEPECEoBkaZII+pa7mEk42s=",
+        "owner": "jopitz",
+        "repo": "its-jointprobability-model",
+        "rev": "a57484df4a1702a05f520fa0684e0ebc29271475",
+        "type": "gitlab"
+      },
+      "original": {
+        "host": "gitlab.gwdg.de",
+        "owner": "jopitz",
+        "repo": "its-jointprobability-model",
+        "type": "gitlab"
+      }
+    },
     "nix-filter": {
       "locked": {
         "lastModified": 1705332318,
@@ -104,21 +134,6 @@
     },
     "nix-filter_2": {
       "locked": {
-        "lastModified": 1705332318,
-        "narHash": "sha256-kcw1yFeJe9N4PjQji9ZeX47jg0p9A0DuU4djKvg1a7I=",
-        "owner": "numtide",
-        "repo": "nix-filter",
-        "rev": "3449dc925982ad46246cfc36469baf66e1b64f17",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "nix-filter",
-        "type": "github"
-      }
-    },
-    "nix-filter_3": {
-      "locked": {
         "lastModified": 1701697642,
         "narHash": "sha256-L217WytWZHSY8GW9Gx1A64OnNctbuDbfslaTEofXXRw=",
         "owner": "numtide",
@@ -132,7 +147,7 @@
         "type": "github"
       }
     },
-    "nix-filter_4": {
+    "nix-filter_3": {
       "locked": {
         "lastModified": 1701697642,
         "narHash": "sha256-L217WytWZHSY8GW9Gx1A64OnNctbuDbfslaTEofXXRw=",
@@ -182,7 +197,7 @@
     "nlprep": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nix-filter": "nix-filter_2",
+        "nix-filter": "nix-filter",
         "nixpkgs": [
           "data-utils",
           "nixpkgs"
@@ -228,7 +243,8 @@
       "inputs": {
         "data-utils": "data-utils",
         "flake-utils": "flake-utils_2",
-        "nix-filter": "nix-filter_3",
+        "model": "model",
+        "nix-filter": "nix-filter_2",
         "nixpkgs": "nixpkgs",
         "openapi-checks": "openapi-checks"
       }
