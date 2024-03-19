@@ -229,14 +229,10 @@ class ProdSLDA(Model):
                 logtheta = pyro.sample(
                     "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
                 )
-            # if len(logtheta.shape) > 2:
-            #     logtheta = logtheta.squeeze(0)
             theta = F.softmax(logtheta, -1)
             ic(theta.shape)
 
             # get each document's word distribution from the decoder.
-            # we write this outside the document plate because the nn
-            # can only handle two-dimensional inputs
             count_param = self.count_param(theta)
             ic(count_param.shape)
 
