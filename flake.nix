@@ -144,7 +144,6 @@
           propagatedBuildInputs =
             (python-packages-build py-pkgs)
             ++ [ pkgs.sqlite ];
-          doCheck = false;
         };
 
         get-python-package = pkgs: python-pkg-lib pkgs (get-python pkgs).pkgs;
