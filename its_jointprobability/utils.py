@@ -4,13 +4,13 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import reduce
 from typing import Literal, Optional, TypeVar
 
-import nlprep.spacy.props as nlp
+import its_prep.spacy.props as nlp
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
 from icecream import ic
-from nlprep import Collection, partial, tokenize_documents
+from its_prep import Collection, partial, tokenize_documents
 from pydantic import BaseModel
 
 T = TypeVar("T")

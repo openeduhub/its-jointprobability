@@ -7,4 +7,5 @@ pyro-ppl
 icecream
 matplotlib
 optuna
-nlprep
+its-data
+its-prep
