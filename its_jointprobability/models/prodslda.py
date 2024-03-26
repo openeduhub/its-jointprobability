@@ -16,13 +16,13 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from data_utils.default_pipelines.data import (
+from its_data.default_pipelines.data import (
     BoW_Data,
     balanced_split,
     publish,
     subset_data_points,
 )
-from data_utils.defaults import Fields
+from its_data.defaults import Fields
 from icecream import ic
 from its_jointprobability.data import (
     Split_Data,

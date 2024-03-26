@@ -4,14 +4,14 @@ from typing import NamedTuple, TypeVar
 import numpy as np
 import pyro
 import torch
-from data_utils.default_pipelines.data import (
+from its_data.default_pipelines.data import (
     BoW_Data,
     Processed_Data,
     balanced_split,
     import_published,
 )
-from data_utils.default_pipelines.its_jointprobability import generate_data
-from data_utils.defaults import Fields
+from its_data.default_pipelines.its_jointprobability import generate_data
+from its_data.defaults import Fields
 
 from its_jointprobability.models.model import Model
 
