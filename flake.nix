@@ -2,7 +2,7 @@
   description = "A Bayesian approach to metadata prediction in education";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-filter.url = "github:numtide/nix-filter";
     openapi-checks = {
@@ -11,8 +11,8 @@
         flake-utils.follows = "flake-utils";
       };
     };
-    data-utils = {
-      url = "github:openeduhub/data-utils";
+    its-data = {
+      url = "github:openeduhub/its-data";
       inputs = {
         flake-utils.follows = "flake-utils";
         nixpkgs.follows = "nixpkgs";
@@ -58,11 +58,11 @@
             cudaSupport = true;
           };
           overlays = [
-            self.inputs.data-utils.overlays.default
+            self.inputs.its-data.overlays.default
           ];
         };
         pkgs-without-cuda = nixpkgs.legacyPackages.${system}.extend
-          self.inputs.data-utils.overlays.default;
+          self.inputs.its-data.overlays.default;
 
         openapi-checks = self.inputs.openapi-checks.lib.${system};
         nix-filter = self.inputs.nix-filter.lib;
@@ -80,7 +80,7 @@
             icecream
             matplotlib
             tqdm
-            data-utils
+            its-data
           ];
 
         python-packages-build = py-pkgs:
