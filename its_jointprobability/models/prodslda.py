@@ -325,21 +325,20 @@ class ProdSLDA(Model):
 
             # the distribution over each target
             for i, probs in enumerate(probs_col):
-                with pyro.poutine.scale(scale=self.target_scale):
-                    with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
-                        targets_i = targets[i] if len(targets) > i else None
-                        obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
-                        ic(probs.shape)
-                        target = pyro.sample(
-                            f"target_{self.target_names[i]}",
-                            dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
-                            obs=targets_i.swapaxes(-1, -2)
-                            if targets_i is not None
-                            else None,
-                            obs_mask=obs_masks_i,
-                            infer={"enumerate": "parallel"},
-                        ).swapaxes(-1, -2)
-                        ic(target.shape)
+                with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
+                    targets_i = targets[i] if len(targets) > i else None
+                    obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
+                    ic(probs.shape)
+                    target = pyro.sample(
+                        f"target_{self.target_names[i]}",
+                        dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
+                        obs=targets_i.swapaxes(-1, -2)
+                        if targets_i is not None
+                        else None,
+                        obs_mask=obs_masks_i,
+                        infer={"enumerate": "parallel"},
+                    ).swapaxes(-1, -2)
+                    ic(target.shape)
 
     def guide(
         self,
@@ -420,17 +419,16 @@ class ProdSLDA(Model):
             ]
 
             for i, probs_q in enumerate(probs_q_col):
-                with pyro.poutine.scale(scale=self.target_scale):
-                    with pyro.plate(f"target_{i}_plate"):
-                        if len(probs_q.shape) > 2 and probs_q.shape[-3] == 1:
-                            probs_q.squeeze_(-3)
-                        ic(probs_q.shape)
-                        target_q = pyro.sample(
-                            f"target_{self.target_names[i]}_unobserved",
-                            dist.Bernoulli(probs_q.swapaxes(-1, -2)),  # type: ignore
-                            infer={"enumerate": "parallel"},
-                        ).swapaxes(-1, -2)
-                        ic(target_q.shape)
+                with pyro.plate(f"target_{i}_plate"):
+                    if len(probs_q.shape) > 2 and probs_q.shape[-3] == 1:
+                        probs_q.squeeze_(-3)
+                    ic(probs_q.shape)
+                    target_q = pyro.sample(
+                        f"target_{self.target_names[i]}_unobserved",
+                        dist.Bernoulli(probs_q.swapaxes(-1, -2)),  # type: ignore
+                        infer={"enumerate": "parallel"},
+                    ).swapaxes(-1, -2)
+                    ic(target_q.shape)
 
     def count_param(self, theta: torch.Tensor) -> torch.Tensor:
         pyro.module("decoder", self.decoder)
@@ -947,7 +945,6 @@ def default_fix_model_kwargs(
         "nu_loc": -2.0,
         "nu_scale": 1.5,
         "annealing_factor": 0.5,
-        "target_scale": 1.0,
         "use_batch_normalization": True,
         "mle_priors": False,
         "correlated_nus": False,
@@ -968,20 +965,6 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
         initial_lr=lambda _: 0.1,
         max_epochs=lambda _: 500,
     ),
-    "target_scale": lambda train_data, torch_data: Trial_Spec(
-        name="prodslda_target-scale",
-        fix_model_kwargs=default_fix_model_kwargs(train_data, torch_data)
-        | {"mle_priors": True},
-        var_model_kwargs={
-            "target_scale": lambda trial: trial.suggest_float(
-                "target_scale", 0.1, 100, log=True
-            ),
-        },
-        num_particles=lambda _: 1,
-        gamma=lambda _: 1.0,
-        initial_lr=lambda _: 0.1,
-        max_epochs=lambda _: 500,
-    ),
     "annealing_factor": lambda train_data, torch_data: Trial_Spec(
         name="prodslda_annealing-factor",
         fix_model_kwargs=default_fix_model_kwargs(train_data, torch_data),
@@ -999,9 +982,6 @@ DEFAULT_TRIALS: dict[str, Callable[[BoW_Data, Torch_Data], Trial_Spec]] = {
         name="prodslda_priors",
         fix_model_kwargs=default_fix_model_kwargs(train_data, torch_data),
         var_model_kwargs={
-            "target_scale": lambda trial: trial.suggest_float(
-                "target_scale", 0.1, 100, log=True
-            ),
             "nu_loc": lambda trial: trial.suggest_float("nu_loc", -10.0, 0.0),
             "nu_scale": lambda trial: trial.suggest_float("nu_scale", 0.1, 3, log=True),
         },
