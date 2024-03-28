@@ -48,8 +48,9 @@ class Simple_Model:
     # store the device on which this model shall run
     device: Optional[torch.device] = None
 
-    # an annealing factor that rises during training
-    annealing_factor: float
+    #: an annealing factor that increases to 1.0 during training.
+    #: it is up to the actual model implementation to use this factor.
+    annealing_factor: float = 1.0
 
     @abstractmethod
     def model(self, *args, **kwargs):

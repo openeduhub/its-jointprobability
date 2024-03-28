@@ -1,7 +1,7 @@
 import argparse
 import math
 import pickle
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from pprint import pprint
 from typing import Any, NamedTuple, Optional
@@ -16,6 +16,7 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from icecream import ic
 from its_data.default_pipelines.data import (
     BoW_Data,
     balanced_split,
@@ -23,7 +24,6 @@ from its_data.default_pipelines.data import (
     subset_data_points,
 )
 from its_data.defaults import Fields
-from icecream import ic
 from its_jointprobability.data import (
     Split_Data,
     import_data,
@@ -41,15 +41,16 @@ from its_jointprobability.utils import (
 
 class ProdSLDA(Model):
     """
-    A modification of the ProdLDA model to support supervised classification.
+    A modification of the ProdLDA model to support semi-supervised
+    multi-assignment classification for arbitrarily many fields.
     """
 
     def __init__(
         self,
-        # data
+        # information about the inputs
         vocab: Sequence[str],
-        id_label_dicts: Collection[dict[str, str]],
-        target_names: Collection[str],
+        target_names: Sequence[str],
+        id_label_dicts: Sequence[dict[str, str]],
         # model settings
         num_topics: int = 500,
         nu_loc: float = -6.7,
@@ -58,20 +59,87 @@ class ProdSLDA(Model):
         cov_rank: Optional[int] = None,
         mle_priors: bool = True,
         # variational auto-encoder settings
-        # we can set the hidden dimension as high as we want without risking
-        # overfitting, as the neural networks are mapping to the variational
-        # parameters; NOT the actual predictions
         hid_size: int = 1000,
         hid_num: int = 1,
-        target_scale: Optional[float] = 1.0,
-        annealing_factor: float = 0.012,
+        hid_size_factor: float = 0.5,
         dropout: float = 0.6,
         use_batch_normalization: bool = True,
         affine_batch_normalization: bool = False,
         # the torch device to run on
         device: Optional[torch.device] = None,
+        **kwargs,
     ):
-        # save the given arguments so that they can be exported later
+        """
+        :param vocab: The ordered list of words that are contained within the
+            bag-of-words representations. "Ordered" refers to the fact that the
+            in-th entry in this sequence corresponds to the n-th column of the
+            bag-of-words representations.
+            We require this information in order to do predictions, as texts
+            have to be mapped back to comparable bag-of-words representations.
+        :param target_names: The names of the various fields that are being
+            learned and predicted.
+        :param id_label_dicts: The maps from id's to human readable labels for
+            values of the various fields. Note that the order of these
+            dictionaries must match the order of the fields in
+            ``target_names``. While this information is not directly used in
+            the model, at least the number of categories within each field must
+            correspond to the number of entries within each dictionary.
+        :param num_topics: Hyperparameter determining the number of latent
+            topics to use for representing the bag-of-words documents as
+            vectors. The default value was chosen through hyperparameter
+            optimization, though it could, given sufficient data, be increased
+            arbitrarily.
+        :param nu_loc: The (initial) prior mean for the applicability
+            coefficient that links topics to targets. The default value was
+            chosen through hyperparameter optimization.
+        :param nu_scale: The (initial) prior standard deviation for the
+            applicability coefficient that links topics to targets. The default
+            value was chosen through hyperparameter optimization.
+        :param correlated_nus: Whether to model the prior and posterior
+            distribution of nu such that each applicabilities for different
+            topic-category-pairs may be correlated. The default value was
+            chosen through hyperparameter optimization, and was found to barely
+            affect the quality of the predictions.
+        :param cov_rank: The rank of the covariance matrix to use when allowing
+            correlation between different topic-category pairs. Only relevant
+            if ``correlated_nus`` is set to True. If set to None, the square
+            root of the number of total categories between all fields is
+            chosen.
+        :param mle_priors: Whether to adjust the priors during optimization to
+            match their corresponding maximum likelihood estimators.
+            Note that setting this to True results in a different prior
+            distribution for each category. The default value was chosen
+            through hyperparameter optimization.
+            Additionally, setting this to True makes the choice of ``nu_loc``
+            and ``nu_scale`` largely irrelevant.
+        :param hid_size: The size of the first hidden layer of the encoder and
+            decoder neural networks.
+            Note that this may be set arbitrarily high, without risking
+            overfitting, as the auto-encoder is only responsible for estimating
+            the variational parameters, NOT the actual predictions.
+        :param hid_num: The number of hidden layers in the encoder neural
+            network. Note that each subsequent hidden layer's size is
+            multiplied with ``hid_size_factor``. The default was chosen through
+            hyperparameter optimization.
+        :param hid_size_factor: The factor to multiply the size of each
+            subsequent hidden layer's size with. The default was chosen
+            arbitrarily.
+        :param dropout: The dropout rate to use. This helps in combating
+            component collapse in the neural networks. The default was chosen
+            through hyperparameter optimization.
+        :param use_batch_normalization: Whether to apply batch normalization to
+            the results of the neural networks. This helps in combating
+            component collapse in the neural networks. The default was chosen
+            through hyperparameter optimization.
+        :param affine_batch_normalization: Whether to use affine batch
+            normalization, which increases the number of learnable parameters
+            and expressiveness of the neural networks. The default was chosen
+            through hyperparameter optimization.
+        :param device: The PyTorch device to run this model on.
+        """
+        # save the given arguments so that they can be exported later.
+        # this allows us to not have to export the entire model object,
+        # but only its state and initialization parameters.
         self.args = locals().copy()
         del self.args["self"]
         del self.args["device"]
@@ -94,16 +162,6 @@ class ProdSLDA(Model):
 
         super().__init__()
 
-        # because we tend to have significantly more words than targets,
-        # the topic modeling part of the model can dominate the classification.
-        # to combat this, we scale the loss function of the latter accordingly.
-        self.target_scale = (
-            target_scale
-            if target_scale is not None
-            else max(1.0, np.log(vocab_size * num_topics / sum(target_sizes)))
-        )
-        self.annealing_factor = annealing_factor
-
         self.vocab = vocab
         self.vocab_size = vocab_size
         self.id_label_dicts = id_label_dicts
@@ -117,6 +175,7 @@ class ProdSLDA(Model):
         )
         self.hid_size = hid_size
         self.hid_num = hid_num
+        self.hid_size_factor = hid_size_factor
         self.dropout = dropout
         self.nu_loc = float(nu_loc)
         self.nu_scale = float(nu_scale)
@@ -125,8 +184,6 @@ class ProdSLDA(Model):
         self.device = device
 
         # define the variational auto-encoder networks.
-        # to avoid component collapse in the neural networks, apply dropout
-        # and batch normalization
 
         # define the decoder, which takes topic mixtures
         # and returns word probabilities.
@@ -151,12 +208,15 @@ class ProdSLDA(Model):
         self.encoder = nn.Sequential(
             nn.Linear(vocab_size, hid_size),
         )
-        cur_hid_size, prev_hid_size = hid_size // 2, hid_size
+        cur_hid_size, prev_hid_size = (
+            math.ceil(hid_size * self.hid_size_factor),
+            hid_size,
+        )
         for _ in range(hid_num - 1):
             self.encoder.append(nn.Tanh())
             self.encoder.append(nn.Linear(prev_hid_size, cur_hid_size))
             prev_hid_size = cur_hid_size
-            cur_hid_size = prev_hid_size // 2
+            cur_hid_size = math.ceil(prev_hid_size * self.hid_size_factor)
         self.encoder.append(nn.Tanh())
         self.encoder.append(nn.Dropout(dropout))
         self.encoder.append(nn.Linear(prev_hid_size, num_topics * 2))
@@ -177,6 +237,7 @@ class ProdSLDA(Model):
         docs: torch.Tensor,
         *targets: torch.Tensor | None,
         obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
+        **kwargs,
     ):
         n = sum(self.target_sizes)
         # if no observations mask has been given, ignore any docs that
@@ -476,8 +537,8 @@ def set_up_data(data: Split_Data) -> Torch_Data:
 def train_model(
     data_loader: Data_Loader,
     vocab: Sequence[str],
-    id_label_dicts: Collection[dict[str, str]],
-    target_names: Collection[str],
+    id_label_dicts: Sequence[dict[str, str]],
+    target_names: Sequence[str],
     min_epochs: int = 10,
     max_epochs: int = 1000,
     num_particles: int = 1,
@@ -485,6 +546,7 @@ def train_model(
     gamma: float = 0.25,
     betas: tuple[float, float] = (0.3, 0.18),
     seed: int = 0,
+    initial_annealing_factor: float = 0.012,
     device: Optional[torch.device] = None,
     **kwargs,
 ) -> ProdSLDA:
@@ -497,6 +559,8 @@ def train_model(
         device=device,
         **kwargs,
     )
+
+    prodslda.annealing_factor = initial_annealing_factor
 
     prodslda.run_svi(
         data_loader=data_loader,
