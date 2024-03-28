@@ -484,7 +484,9 @@ class ProdSLDA(Model):
             target.sum(-1) > 0 if target is not None else None for target in targets
         ]
 
-    def predict(self, *data: torch.Tensor) -> dict[str, torch.Tensor]:
+    def predict(
+        self, *data: torch.Tensor, num_samples: int = 100
+    ) -> dict[str, torch.Tensor]:
         """
         Return samples of the probabilities for each predicted target's
         categories.
@@ -500,7 +502,7 @@ class ProdSLDA(Model):
                 dtype=torch.float,
             ),
             return_sites=[site for site in self.return_sites if "probs_" == site[:6]],
-            num_samples=100,
+            num_samples=num_samples,
         )
         # re-key the samples such that only the target names are left
         samples = {key[6:]: value for key, value in samples.items()}
@@ -733,26 +735,27 @@ def run_evaluation(model: ProdSLDA, data: Split_Data, eval_sites: dict[str, str]
     titles = {key: value.labels for key, value in data.train.target_data.items()}
 
     # evaluate the newly trained model
-    print()
-    print("------------------------------")
-    print("evaluating model on train data")
-    results = eval_samples(
-        target_samples=model.predict(train_docs),
-        targets=train_targets,
-        target_values=titles,
-        cutoffs=None,
-        # cutoff_compute_method="base-rate",
-    )
+    # print()
+    # print("------------------------------")
+    # print("evaluating model on train data")
+    # results = eval_samples(
+    #     target_samples=model.predict(train_docs, num_samples=50),
+    #     targets=train_targets,
+    #     target_values=titles,
+    #     cutoffs=None,
+    #     # cutoff_compute_method="base-rate",
+    # )
+    # cutoffs = {key: result.cutoff for key, result in results.items()}
 
     if len(test_docs) > 0:
         print()
         print("-----------------------------")
         print("evaluating model on test data")
         eval_samples(
-            target_samples=model.predict(test_docs),
+            target_samples=model.predict(test_docs, num_samples=150),
             targets=test_targets,
             target_values=titles,
-            cutoffs={key: result.cutoff for key, result in results.items()},
+            cutoffs=None,
         )
 
         # print()

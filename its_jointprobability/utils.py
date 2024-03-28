@@ -269,8 +269,7 @@ class Quality_Result(BaseModel):
 def quality_measures(
     samples: torch.Tensor,
     targets: torch.Tensor,
-    cutoff: Optional[float | Collection[float]] = None,
-    cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
+    cutoff: Optional[float | Collection[float] | Collection[Collection[float]]] = None,
     mean_dim: Optional[int] = None,
     parallel_dim: Optional[int] = None,
     use_median: bool = False,
@@ -288,49 +287,52 @@ def quality_measures(
     # to be positive
     if cutoff is None:
         # the cutoffs to try
-        if cutoff_compute_method == "grid-search":
-            # this follows a logistic interpolation between the min and max
-            cutoffs: torch.Tensor = samples.min() + (samples.max() - samples.min()) / (
-                1 + torch.exp(-torch.arange(-100, 100, device=samples.device) / 10)
-            )
-        elif cutoff_compute_method == "base-rate":
-            # this uses the base rate, transformed by an exponential,
-            # in order to keep values between 0 and 1.
-            # we also add a small value to the base rate in order to keep
-            # cutoffs at a minimum value
-            # cutoffs: torch.Tensor = (targets.mean(-2).unsqueeze(-2) + 0.01) ** (
-            #     torch.arange(40, 100, device=targets.device).unsqueeze(-1) / 100
-            # )
-            cutoffs = (
-                targets.mean(-2)
-                .maximum(torch.tensor(0.2, device=targets.device))
-                .unsqueeze(-2)
-            )
+        # this follows a logistic interpolation between the min and max
+        cutoffs: torch.Tensor = samples.min() + (samples.max() - samples.min()) / (
+            1 + torch.exp(-torch.arange(-100, 100, device=samples.device) / 10)
+        )
 
-        else:
-            raise ValueError("No proper cutoff computation method was given")
+        # if we are grouping by a specific dimension, optimize each cutoff individually
+        print(f"{cutoffs.shape=}")
+        if parallel_dim is not None:
+            cutoffs = cutoffs.expand([samples.shape[parallel_dim], -1]).swapaxes(-1, -2)
+
+        print(f"{cutoffs.shape=}")
 
         # the quality measures for each cutoff
         scores = [
             quality_measures(
                 samples,
                 targets,
-                cutoff=cutoff.tolist(),
-                parallel_dim=None,
-                mean_dim=None,
+                cutoff=cutoff,
+                parallel_dim=parallel_dim,
+                mean_dim=mean_dim,
                 use_median=use_median,
             )
             for cutoff in cutoffs
         ]
         f1_scores = torch.tensor([score.f1_score for score in scores]).nan_to_num()
 
+        print(f"{f1_scores.shape=}")
+
         # select the cutoff where the F1 score is maximized
-        optim_cutoff = cutoffs[f1_scores.argmax()].tolist()
+        if parallel_dim is not None:
+            # swapping the dimensions here makes this a bit more convenient
+            cutoffs.swapaxes_(-1, -2)
+            f1_scores.swapaxes_(-1, -2)
+            indices = f1_scores.argmax(dim=-1)
+            optim_cutoff = torch.tensor(
+                [cutoff[index] for cutoff, index in zip(cutoffs, indices)]
+            )
+        else:
+            optim_cutoff = cutoffs[f1_scores.argmax()]
+
+        print(f"{optim_cutoff.shape=}")
 
         return quality_measures(
             samples,
             targets,
-            cutoff=optim_cutoff,
+            cutoff=optim_cutoff.tolist(),
             mean_dim=None,
             parallel_dim=parallel_dim,
             use_median=use_median,

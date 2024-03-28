@@ -294,7 +294,6 @@ class Simple_Model:
             samples,
             targets=targets.to(self.device).float(),
             cutoff=cutoff,
-            cutoff_compute_method=cutoff_compute_method,
             mean_dim=mean_dim,
         )
 
@@ -469,7 +468,6 @@ def eval_samples(
     cutoffs: Optional[
         float | Collection[float] | Mapping[str, None | float | Collection[float]]
     ],
-    cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
     post_sample_funs: Post_Sample_Fun | Mapping[str, Post_Sample_Fun] | None = None,
 ) -> dict[str, Quality_Result]:
     if not isinstance(target_samples, Mapping):
@@ -495,34 +493,59 @@ def eval_samples(
 
         print("------------------------------")
         print(key)
-        global_measures = quality_measures(
-            samples,
-            target.to(samples.device).float(),
-            mean_dim=0,
-            cutoff=cutoffs[key],
-            cutoff_compute_method=cutoff_compute_method,
-        )
-        print(f"global measures:")
-        pprint(global_measures)
+
+        # global_measures = quality_measures(
+        #     samples,
+        #     target.to(samples.device).float(),
+        #     mean_dim=0,
+        #     cutoff=cutoffs[key],
+        #     # cutoff=by_discipline.cutoff,
+        # )
+
+        # pprint(global_measures)
 
         by_discipline = quality_measures(
             samples,
             target.to(samples.device).float(),
             mean_dim=0,
-            cutoff=global_measures.cutoff,
+            cutoff=cutoffs[key],
+            # cutoff=global_measures.cutoff,
             parallel_dim=-1,
         )
+
+        count = target.sum(-2).cpu()
+
+        def weighted_mean(x: torch.Tensor):
+            return ((count * x.nan_to_num()).sum() / count.sum()).tolist()
+
+        averaged_measures = Quality_Result(
+            accuracy=weighted_mean(torch.tensor(by_discipline.accuracy)),
+            precision=weighted_mean(torch.tensor(by_discipline.precision)),
+            recall=weighted_mean(torch.tensor(by_discipline.recall)),
+            f1_score=weighted_mean(torch.tensor(by_discipline.f1_score)),
+            cutoff=by_discipline.cutoff,
+        )
+
+        print(f"weighted averages:")
+        pprint(
+            {
+                key: getattr(averaged_measures, key)
+                for key in ["accuracy", "precision", "recall", "f1_score"]
+            }
+        )
+
         df = pd.DataFrame(
             {
                 key: getattr(by_discipline, key)
                 for key in ["accuracy", "precision", "recall", "f1_score"]
             }
         )
-        df["taxonid"] = target_values[key]
-        df["count"] = target.sum(-2).cpu()
-        df = df.set_index("taxonid")
+        df[key] = target_values[key]
+        df["support"] = count
+        df = df.sort_values(key)
+        df = df.set_index(key)
         print(df.sort_values("f1_score", ascending=False).to_string())
-
+        df.to_csv(f"./{key}.csv")
         results[key] = by_discipline
 
     return results
