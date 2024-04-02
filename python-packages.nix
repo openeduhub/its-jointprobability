@@ -1,6 +1,6 @@
 rec {
   # the strictly necessary libraries for deploying the service
-  deploy = py-pkgs: with py-pkgs; [
+  deploy-pkgs = py-pkgs: with py-pkgs; [
     setuptools
     pandas
     uvicorn
@@ -13,17 +13,17 @@ rec {
     its-data
   ];
 
-  # additional libraries for (re-) training the underlying model
-  train = py-pkgs: with py-pkgs; [
+  # additional libraries for hyperparameter optimization of the model
+  optuna-pkgs = py-pkgs: with py-pkgs; [
     optuna
     # for plotting optuna importance
     plotly
     scikit-learn
   ]
-  ++ (deploy py-pkgs);
+  ++ (deploy-pkgs py-pkgs);
 
   # additional libraries for development
-  devel = py-pkgs: with py-pkgs; [
+  devel-pkgs = py-pkgs: with py-pkgs; [
     black
     pyflakes
     isort
@@ -33,5 +33,5 @@ rec {
     # library stubs for mypy
     pandas-stubs
   ]
-  ++ (train py-pkgs);
+  ++ (optuna-pkgs py-pkgs);
 }

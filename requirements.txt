@@ -6,6 +6,5 @@ fastapi
 pyro-ppl
 icecream
 matplotlib
-optuna
 its-data
 its-prep
