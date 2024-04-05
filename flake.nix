@@ -233,7 +233,7 @@
             };
             run-study = {
               type = "app";
-              program = "${self.outputs.packages.${system}.optuna-env}/bin/retrain-model";
+              program = "${self.outputs.packages.${system}.optuna-env}/bin/study-prodslda";
             };
           }
           //
@@ -245,7 +245,7 @@
             };
             run-study-with-cuda = {
               type = "app";
-              program = "${self.outputs.packages.${system}.optuna-env-with-cuda}/bin/retrain-model";
+              program = "${self.outputs.packages.${system}.optuna-env-with-cuda}/bin/study-prodslda";
             };
           });
 
