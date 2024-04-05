@@ -225,7 +225,7 @@
                   service-bin = "${self.packages.${system}.webservice}/bin/its-jointprobability --debug";
                   service-port = 8080;
                   openapi-domain = "/openapi.json";
-                  memory-size = 2048;
+                  memory-size = 4 * 1024;
                 }
               );
             }

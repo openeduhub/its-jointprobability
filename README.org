@@ -568,7 +568,7 @@ Religion             0.187654     0.152969       0.001846  [0.0183227, 0.299276]
 * Notes / Limitations
 
 ** RAM Usage
-The service requires roughly 2GB of RAM to operate. This usage should be static with time.
+The service requires roughly 4GB of RAM to operate. This usage should be roughly static with time, though queries will momentarily increase the RAM usage -- proportionally to the number of samples used.
 
 ** Cutoffs
 Because of the nature of the model, it can be difficult to decide on which predictions shall be counted as actually being predicted to be assigned. Experimentally, a cutoff of around 0.3 for the mean probability for the school discipline and 0.4 for the educational context appear to be good metrics.
