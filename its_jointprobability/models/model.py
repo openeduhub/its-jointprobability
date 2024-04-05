@@ -3,12 +3,13 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pprint import pprint
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 import pyro
 import pyro.infer
+import pyro.ops.stats
 import pyro.optim
 import torch
 from its_jointprobability.utils import (
@@ -20,8 +21,21 @@ from its_jointprobability.utils import (
     sequential_data_loader,
     texts_to_bow_tensor,
 )
+from pydantic import BaseModel, Field
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
+from icecream import ic
+
+
+class Prediction_Score(BaseModel):
+    """An individual prediction for a particular target."""
+
+    id: str
+    name: str
+    mean_prob: float
+    median_prob: float
+    baseline_diff: float
+    prob_interval: list[float] = Field(min_length=2, max_length=2)
 
 
 class Simple_Model:
@@ -30,7 +44,19 @@ class Simple_Model:
     # the random variables that are contained within posterior samples
     return_sites: Collection[str]
     # the dimensions along which to concat the random variables during batching
-    return_site_cat_dim: dict[str, int]
+    return_site_cat_dim: Mapping[str, int]
+    # map from target name to site used for prediction
+    prediction_sites: Mapping[str, str]
+
+    # the baseline, "empty" data
+    baseline_data: Collection[torch.Tensor]
+
+    # the names of the various targets being predicted
+    target_names: Sequence[str]
+    # the number of categories per target being predicted
+    target_sizes: Sequence[int]
+    # per-target mapping from category URI to human-readable label
+    id_label_dicts: Sequence[Mapping[str, str]]
 
     # various hooks that may be run during SVI
     svi_pre_hooks: list[Callable[[], Any]]  # before start
@@ -44,9 +70,12 @@ class Simple_Model:
     # store the device on which this model shall run
     device: Optional[torch.device] = None
 
-    #: an annealing factor that increases to 1.0 during training.
-    #: it is up to the actual model implementation to use this factor.
+    # an annealing factor that increases to 1.0 during training.
+    # it is up to the actual model implementation to use this factor.
     annealing_factor: float = 1.0
+
+    # the cached baseline distribution of each target's categories
+    _baselines: Optional[dict[str, list[float]]] = None
 
     @abstractmethod
     def model(self, *args, **kwargs):
@@ -88,6 +117,9 @@ class Simple_Model:
             the learning rate will be multiplied with gamma^2,
             after 300 epochs, it will be multiplied with gamma^3, and so on.
         """
+
+        # reset the cached baseline distribution
+        self._baselines = None
 
         for hook in self.svi_pre_hooks:
             hook()
@@ -180,6 +212,10 @@ class Simple_Model:
 
     def predictive(self, *args, **kwargs) -> pyro.infer.Predictive:
         """Return a Predictive object in order to generate posterior samples."""
+        # ensure that the return sites are a tuple, as Predictive requires this
+        # to be a list, tuple, or set
+        if "return_sites" in kwargs:
+            kwargs["return_sites"] = tuple(kwargs["return_sites"])
         return pyro.infer.Predictive(self.model, guide=self.guide, *args, **kwargs)
 
     def draw_posterior_samples(
@@ -193,7 +229,9 @@ class Simple_Model:
         """Draw posterior samples from this model."""
         return_sites = return_sites if return_sites is not None else self.return_sites
         predictive = self.predictive(
-            num_samples=num_samples, return_sites=return_sites, parallel=parallel_sample
+            num_samples=num_samples,
+            return_sites=return_sites,
+            parallel=parallel_sample,
         )
 
         posterior_samples = None
@@ -264,7 +302,6 @@ class Simple_Model:
         num_samples: int = 1,
         mean_dim: Optional[int] = None,
         cutoff: Optional[float] = None,
-        cutoff_compute_method: Literal["grid-search", "base-rate"] = "grid-search",
         post_sample_fun: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         **kwargs,
     ) -> Quality_Result:
@@ -289,6 +326,105 @@ class Simple_Model:
             targets=targets.to(self.device).float(),
             cutoff=cutoff,
             mean_dim=mean_dim,
+        )
+
+    def get_baseline_dists(self) -> dict[str, list[float]]:
+        if self._baselines is not None:
+            return self._baselines
+
+        baseline_samples = self.draw_posterior_samples(
+            sequential_data_loader(
+                *[
+                    baseline_date.expand([10**4] + [-1 for _ in baseline_date.shape])
+                    for baseline_date in self.baseline_data
+                ]
+            ),
+            num_samples=1,
+            return_sites=self.prediction_sites.values(),
+            progress_bar=True,
+        )
+
+        prediction_scores = self._predict_from_posterior_samples(
+            baseline_samples,
+            interval_size=0.0,
+            # avoid infinite recursion
+            compute_baselines=False,
+        )
+
+        self._baselines = {
+            key: [prediction.mean_prob for prediction in predictions]
+            for key, predictions in prediction_scores.items()
+        }
+        return self._baselines
+
+    def _predict_from_posterior_samples(
+        self,
+        posterior_samples_by_field: Mapping[str, torch.Tensor],
+        interval_size: float,
+        compute_baselines: bool = True,
+    ) -> dict[str, list[Prediction_Score]]:
+        predictions: dict[str, list[Prediction_Score]] = dict()
+
+        for field, posterior_samples, id_label_dict in zip(
+            self.target_names,
+            posterior_samples_by_field.values(),
+            self.id_label_dicts,
+        ):
+            probs = posterior_samples.squeeze(-3).squeeze(-3)
+            mean_probs = probs.mean(0)
+            median_probs = probs.median(0)[0]
+            intervals: list[list[float]] = (
+                pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T
+            ).tolist()
+
+            mean_prob_diffs = torch.zeros_like(mean_probs)
+            if compute_baselines:
+                mean_prob_diffs = mean_probs - torch.tensor(
+                    self.get_baseline_dists()[field]
+                )
+
+            prediction = [
+                Prediction_Score(
+                    id=uri,
+                    name=label,
+                    mean_prob=float(mean_prob),
+                    baseline_diff=mean_prob_diff,
+                    median_prob=float(median_prob),
+                    prob_interval=interval,
+                )
+                for label, uri, mean_prob, mean_prob_diff, median_prob, interval in zip(
+                    id_label_dict.values(),
+                    id_label_dict.keys(),
+                    mean_probs,
+                    mean_prob_diffs,
+                    median_probs,
+                    intervals,
+                )
+            ]
+            predictions[field] = prediction
+
+        return predictions
+
+    def predict(
+        self,
+        text: str,
+        tokens: Sequence[str],
+        num_samples: int = 100,
+        interval_size: float = 0.8,
+    ) -> dict[str, list[Prediction_Score]]:
+        try:
+            posterior_samples_by_field = self.draw_posterior_samples_from_texts(
+                text,
+                tokens=tokens,
+                num_samples=num_samples,
+                return_sites=self.prediction_sites.values(),
+            )
+        except RuntimeError:
+            return dict()
+
+        return self._predict_from_posterior_samples(
+            posterior_samples_by_field,
+            interval_size=interval_size,
         )
 
 

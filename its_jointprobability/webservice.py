@@ -1,17 +1,17 @@
 """The webservice that allows for interaction with the Bayesian model."""
 import argparse
 from collections.abc import Sequence
+import math
 from pathlib import Path
 
-import pyro.ops.stats
 import torch
-import torch.nn.functional as F
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from its_jointprobability._version import __version__
 from its_jointprobability.data import load_model
+from its_jointprobability.models.model import Prediction_Score
 from its_jointprobability.models.prodslda import ProdSLDA
 
 
@@ -55,16 +55,6 @@ def main():
         num_predictions: int = Field(default=10, gt=0)
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)
 
-    # classes that define interfaces for the API
-    class Prediction_Score(BaseModel):
-        """An individual prediction for a particular school discipline."""
-
-        id: str
-        name: str
-        mean_prob: float
-        median_prob: float
-        prob_interval: list[float] = Field(min_items=2, max_items=2)
-
     class Prediction_Result(BaseModel):
         """The output of the prediction."""
 
@@ -74,63 +64,9 @@ def main():
     class Webservice:
         """The actual web service."""
 
-        def __init__(self, model: ProdSLDA, token_dict: Sequence[str]) -> None:
+        def __init__(self, model: ProdSLDA, tokens: Sequence[str]) -> None:
             self.model = model
-            self.token_dict = token_dict
-
-        def predict(self, inp: Prediction_Data) -> Prediction_Result:
-            try:
-                posterior_samples_by_field = (
-                    self.model.draw_posterior_samples_from_texts(
-                        inp.text,
-                        tokens=self.token_dict,
-                        num_samples=inp.num_samples,
-                        return_sites=[
-                            site for site in model.return_sites if "probs_" in site
-                        ],
-                    )
-                )
-            except RuntimeError:
-                return Prediction_Result(predictions=dict())
-
-            predictions = dict()
-            for field, posterior_samples, id_label_dict in zip(
-                model.target_names,
-                posterior_samples_by_field.values(),
-                model.id_label_dicts,
-            ):
-                probs = posterior_samples.squeeze(-3).squeeze(-3)
-                mean_probs = probs.mean(0)
-                median_probs = probs.median(0)[0]
-                intervals: list[list[float]] = (
-                    pyro.ops.stats.hpdi(probs, inp.interval_size).squeeze(-1).T
-                ).tolist()
-
-                prediction = sorted(
-                    [
-                        Prediction_Score(
-                            id=uri,
-                            name=label,
-                            mean_prob=float(mean_prob),
-                            median_prob=float(median_prob),
-                            prob_interval=interval,
-                        )
-                        for label, uri, mean_prob, median_prob, interval in zip(
-                            id_label_dict.values(),
-                            id_label_dict.keys(),
-                            mean_probs,
-                            median_probs,
-                            intervals,
-                        )
-                    ],
-                    key=lambda x: x.median_prob,
-                    reverse=True,
-                )
-                predictions[field] = prediction[
-                    : min(len(prediction), inp.num_predictions)
-                ]
-
-            return Prediction_Result(predictions=predictions)
+            self.tokens = tokens
 
         @property
         def app(self) -> FastAPI:
@@ -140,7 +76,7 @@ def main():
             def _ping():
                 pass
 
-            app.post(
+            @app.post(
                 "/predict",
                 summary="Predict the metadata fitting the given text.",
                 description="""
@@ -190,12 +126,37 @@ def main():
                     The credibility interval of the predicted probabilities
                     above.
                 """,
-            )(self.predict)
+            )
+            def predict(inp: Prediction_Data) -> Prediction_Result:
+                predictions = self.model.predict(
+                    text=inp.text,
+                    tokens=self.tokens,
+                    num_samples=inp.num_samples,
+                    interval_size=inp.interval_size,
+                )
+                # sort the predictions and only keep the most relevant
+                predictions = {
+                    key: sorted(
+                        value,
+                        key=lambda x: x.mean_prob,
+                        reverse=True,
+                    )[: min(len(value), inp.num_predictions)]
+                    for key, value in predictions.items()
+                }
+                return Prediction_Result(predictions=predictions)
 
             return app
 
     webservice = Webservice(model, model.vocab)
     app = webservice.app
+
+    # initialize the baseline distributions by calling prediction on a dummy
+    # text.
+    # TODO: move this to post model training and save the baseline
+    # distributions
+    model.predict(
+        text=model.vocab[0] + model.vocab[1], tokens=model.vocab, num_samples=1
+    )
 
     print(f"running on device {model.device}")
 

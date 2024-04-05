@@ -118,7 +118,7 @@ class ProdSLDA(Model):
             multiplied with ``hid_size_factor``. The default was chosen through
             hyperparameter optimization.
         :param hid_size_factor: The factor to multiply the size of each
-            subsequent hidden layer's size with. The default was chosen
+            subsequent hidden layer{s size with. The default was chosen
             arbitrarily.
         :param dropout: The dropout rate to use. This helps in combating
             component collapse in the neural networks. The default was chosen
@@ -155,6 +155,10 @@ class ProdSLDA(Model):
             | {f"probs_{label}": -2 for label in target_names}
             | {"nu": -4, "a": -2}
         )
+        self.prediction_sites = {
+            site[6:]: site for site in self.return_sites if "probs_" == site[:6]
+        }
+        self.baseline_data = [torch.zeros([vocab_size], device=device)]
 
         super().__init__()
 
@@ -237,7 +241,7 @@ class ProdSLDA(Model):
         n = sum(self.target_sizes)
         # if no observations mask has been given, ignore any docs that
         # do not have any assigned labels for that given target
-        # or any non-assigned labels (depending on the model's settings)
+        # or any non-assigned labels (depending on the model}s settings)
         if obs_masks is None:
             obs_masks = self._get_obs_mask(*targets)
 
@@ -463,7 +467,7 @@ class ProdSLDA(Model):
             target.sum(-1) > 0 if target is not None else None for target in targets
         ]
 
-    def predict(
+    def draw_posterior_probs_samples(
         self, *data: torch.Tensor, num_samples: int = 100
     ) -> dict[str, torch.Tensor]:
         """
@@ -712,7 +716,7 @@ def run_evaluation(model: ProdSLDA, data: Split_Data, eval_sites: dict[str, str]
     # print("------------------------------")
     # print("evaluating model on train data")
     # results = eval_samples(
-    #     target_samples=model.predict(train_docs, num_samples=50),
+    #     target_samples=model.draw_posterior_probs_samples(train_docs, num_samples=50),
     #     targets=train_targets,
     #     target_values=titles,
     #     cutoffs=None,
@@ -725,25 +729,10 @@ def run_evaluation(model: ProdSLDA, data: Split_Data, eval_sites: dict[str, str]
         print("-----------------------------")
         print("evaluating model on test data")
         eval_samples(
-            target_samples=model.predict(test_docs, num_samples=150),
+            target_samples=model.draw_posterior_probs_samples(
+                test_docs, num_samples=150
+            ),
             targets=test_targets,
             target_values=titles,
             cutoffs=None,
         )
-
-        # print()
-        # print("-----------------------------------------------------------")
-        # print("evaluating model on test data, providing all other metadata")
-        # for index, key in enumerate(titles.keys()):
-        #     targets_without_current = [test_docs] + [
-        #         targets if i != index else None
-        #         for i, targets in enumerate(test_targets.values())
-        #     ]
-        #     eval_model(
-        #         model,
-        #         *targets_without_current,
-        #         targets={key: test_targets[key]},
-        #         target_values={key: titles[key]},
-        #         eval_sites={key: eval_sites[key]},
-        #         cutoffs={key: result.cutoff for key, result in results.items()},
-        #     )
