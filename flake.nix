@@ -107,7 +107,7 @@
           py-pkgs:
           py-pkgs.buildPythonPackage {
             pname = "its-jointprobability";
-            version = "0.2.0";
+            version = "0.2.1";
             src = get-src true;
             # replace local lookups of the model with the model that we pulled in
             # the inputs
