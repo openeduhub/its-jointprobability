@@ -29,6 +29,69 @@ for key, value in sorted(list(result_dict.items())):
     print()
 #+end_src
 
+* Installation (through ~Nix Flakes~)
+
+Add this repository to your Flake inputs. This may look like this:
+#+begin_src nix
+{
+  inputs = {
+    its-jointprobability = {
+      url = "github:openeduhub/its-jointprobability";
+      # optional if using as application, required if using as library
+      nixpkgs.follows = "nixpkgs"; 
+    };
+  };
+}
+#+end_src
+
+The micro-service is provided both as a ~nixpkgs~ overlay and as an output (~packages.${system}.its-jointprobability~). Thus, it may be included through
+#+begin_src nix
+{
+  outputs =
+    {
+      self,
+      nixpkgs,
+      its-jointprobability,
+      ...
+    }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system}.extend
+        its-jointprobability.overlays.default;
+    in
+    { };
+}
+#+end_src
+
+The Python library is also provided as an overlay:
+#+begin_src nix
+{
+  outputs =
+    {
+      self,
+      nixpkgs,
+      its-jointprobability,
+      ...
+    }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system}.extend
+        its-jointprobability.overlays.python-lib;
+
+      my-python = pkgs.python3.withPackages (
+        py-pkgs: with py-pkgs; [
+          # some examples
+          pandas
+          numpy
+          # this library
+          its-jointprobability
+        ]
+      );
+    in
+    { };
+}
+#+end_src
+
 * Usage
 
 ** Service
@@ -578,57 +641,7 @@ However, more investigations into better cutoffs, e.g. per-category, might be us
 ** Hierarchical Metadata
 While the model can technically predict some hierarchical metadata (i.e. =oeh_lrt= and =curriculum=), these hierarchies are currently flattened, such that any information stemming from the hierarchies is discarded. This may be dealt with at a later date.
 
-* Installation (through ~Nix Flakes~)
-
-Add this repository to your Flake inputs. This may look like this:
-#+begin_src nix
-{
-  inputs = {
-    its-jointprobability = {
-      url = "github:openeduhub/its-jointprobability";
-      # optional if using as application, required if using as library
-      nixpkgs.follows = "nixpkgs"; 
-    };
-  };
-}
-#+end_src
-
-The micro-service is provided both as a ~nixpkgs~ overlay and as an output (~packages.${system}.its-jointprobability~). Thus, it may be included through
-#+begin_src nix
-{
-  outputs = { self, nixpkgs, its-jointprobability, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs =
-        (nixpkgs.legacyPackages.${system}.extend
-          its-jointprobability.overlays.default);
-    in
-    { ... };
-}
-  
-#+end_src
-
-The Python library is provided as an output (~lib.${system}.its-jointprobability~). Note that this is a function mapping a Python package (e.g. ~pkgs.python310~) to the library. Its inclusion may look like this:
-#+begin_src nix
-{
-  outputs = { self, nixpkgs, its-jointprobability, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      
-      python-with-packages =
-        pkgs.python310.withPackages (py-pkgs: [
-          # some example packages
-          py-pkgs.numpy
-          py-pkgs.pandas
-          # the its-jointprobability library
-          (its-jointprobability.lib.${system}.its-jointprobability py-pkgs)
-        ]);
-    in
-    { ... };
-}
-#+end_src
-
+* 
 * Model Details and Possible Improvements
 
 The model is based on the [[https://pyro.ai/examples/prodlda.html][example implementation]] of [[https://arxiv.org/abs/1703.01488][the ProdLDA model (arXiv:1703.01488)]] in [[https://pyro.ai/][Pyro]], utilizing black-box variational inference. We modified this unsupervised topic model by introducing a linear relationship between the assigned topic mixture and each category of each metadata field to be predicted. Individual categories between different metadata fields are modeled to be independent.
