@@ -13,7 +13,6 @@ import pyro.optim
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from icecream import ic
 from its_data.default_pipelines.data import (
     BoW_Data,
     balanced_split,
@@ -227,7 +226,6 @@ class ProdSLDA(Model):
             )
 
         self.to(device)
-        ic(self)
 
     def model(
         self,
@@ -263,8 +261,6 @@ class ProdSLDA(Model):
         with pyro.poutine.scale(None, self.annealing_factor):
             nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
 
-        ic(nu.shape)
-
         with docs_plate:
             # theta is each document's topic applicability
             logtheta_loc_fun = lambda: docs.new_zeros(self.num_topics)
@@ -288,11 +284,9 @@ class ProdSLDA(Model):
                     "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
                 )
             theta = F.softmax(logtheta, -1)
-            ic(theta.shape)
 
             # get each document's word distribution from the decoder.
             count_param = self.count_param(theta)
-            ic(count_param.shape)
 
             # the distribution of the actual document contents.
             # Currently, PyTorch Multinomial requires `total_count` to be
@@ -313,7 +307,6 @@ class ProdSLDA(Model):
                     "a",
                     dist.Normal(torch.matmul(theta, nu), 1).to_event(1),
                 )
-                ic(a.shape)
 
             probs_col = [
                 pyro.deterministic(f"probs_{self.target_names[i]}", F.sigmoid(a_local))
@@ -325,7 +318,6 @@ class ProdSLDA(Model):
                 with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
                     targets_i = targets[i] if len(targets) > i else None
                     obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
-                    ic(probs.shape)
                     target = pyro.sample(
                         f"target_{self.target_names[i]}",
                         dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
@@ -335,7 +327,6 @@ class ProdSLDA(Model):
                         obs_mask=obs_masks_i,
                         infer={"enumerate": "parallel"},
                     ).swapaxes(-1, -2)
-                    ic(target.shape)
 
     def guide(
         self,
@@ -344,8 +335,6 @@ class ProdSLDA(Model):
         obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
     ):
         n = sum(self.target_sizes)
-        ic(n)
-        ic(docs.shape)
         if obs_masks is None:
             obs_masks = self._get_obs_mask(*targets)
 
@@ -384,7 +373,6 @@ class ProdSLDA(Model):
                 )
             if len(nu_q.shape) > 2 and nu_q.shape[-3] == 1:
                 nu_q.squeeze_(-3)
-            ic(nu_q.shape)
 
         with docs_plate:
             # theta is each document's topic applicability
@@ -393,22 +381,18 @@ class ProdSLDA(Model):
                     "logtheta", dist.Normal(*self.logtheta_params(docs)).to_event(1)
                 )
             theta_q = F.softmax(logtheta_q, -1)
-            ic(theta_q.shape)
 
             a_q_scale = pyro.param(
                 "a_q_scale",
                 lambda: docs.new_ones(n),
                 constraint=dist.constraints.positive,
             )
-            ic(a_q_scale.shape)
-            ic(torch.matmul(theta_q, nu_q).shape)
 
             with pyro.poutine.scale(None, self.annealing_factor):
                 a_q = pyro.sample(
                     "a",
                     dist.Normal(torch.matmul(theta_q, nu_q), a_q_scale).to_event(1),
                 )
-                ic(a_q.shape)
 
             probs_q_col = [
                 F.sigmoid(a_local)
@@ -419,13 +403,11 @@ class ProdSLDA(Model):
                 with pyro.plate(f"target_{i}_plate"):
                     if len(probs_q.shape) > 2 and probs_q.shape[-3] == 1:
                         probs_q.squeeze_(-3)
-                    ic(probs_q.shape)
                     target_q = pyro.sample(
                         f"target_{self.target_names[i]}_unobserved",
                         dist.Bernoulli(probs_q.swapaxes(-1, -2)),  # type: ignore
                         infer={"enumerate": "parallel"},
                     ).swapaxes(-1, -2)
-                    ic(target_q.shape)
 
     def count_param(self, theta: torch.Tensor) -> torch.Tensor:
         pyro.module("decoder", self.decoder)
@@ -521,10 +503,6 @@ def set_up_data(data: Split_Data) -> Torch_Data:
         targets = {
             key: torch.from_numpy(value.arr) for key, value in data.target_data.items()
         }
-
-        ic(docs.shape)
-        ic({field: target.shape for field, target in targets.items()})
-        ic({field: train_target.sum(-2) for field, train_target in targets.items()})
 
         return docs, targets
 
@@ -636,7 +614,6 @@ def retrain_model_cli():
     )
 
     args = parser.parse_args()
-    ic.enabled = args.verbose
 
     path = Path(args.path)
 
@@ -680,7 +657,6 @@ def retrain_model_cli():
             )
         ),
     )
-    ic(batch_size)
     data_loader = default_data_loader(
         train_docs,
         *train_targets.values(),

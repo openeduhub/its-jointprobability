@@ -1,16 +1,15 @@
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection
 from functools import partial
-from pprint import pprint
 from typing import Any, Optional, TypeVar
 
-import optuna
 import pandas as pd
 import pyro
 import pyro.infer
 import torch
-from icecream import ic
 from its_jointprobability.models.model import Model
-from its_jointprobability.utils import Data_Loader, Quality_Result, quality_measures
+from its_jointprobability.utils import Data_Loader
+
+import optuna
 
 T = TypeVar("T", bound=Model)
 
@@ -28,7 +27,6 @@ def prune(
         val = eval_fun(obj, epoch, loss)
         trial.report(val, epoch)
         if trial.should_prune() and epoch >= min_epochs:
-            ic(epoch, val)
             raise optuna.TrialPruned()
 
 

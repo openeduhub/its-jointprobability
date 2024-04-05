@@ -8,12 +8,10 @@ import torch
 import torch.nn.functional as F
 import uvicorn
 from fastapi import FastAPI
-from icecream import ic
 from pydantic import BaseModel, Field
 
 from its_jointprobability._version import __version__
 from its_jointprobability.data import load_model
-from its_jointprobability.models.model import Simple_Model
 from its_jointprobability.models.prodslda import ProdSLDA
 
 
@@ -81,7 +79,6 @@ def main():
             self.token_dict = token_dict
 
         def predict(self, inp: Prediction_Data) -> Prediction_Result:
-            ic.disable()
             try:
                 posterior_samples_by_field = (
                     self.model.draw_posterior_samples_from_texts(
@@ -96,15 +93,12 @@ def main():
             except RuntimeError:
                 return Prediction_Result(predictions=dict())
 
-            ic.enable()
-
             predictions = dict()
             for field, posterior_samples, id_label_dict in zip(
                 model.target_names,
                 posterior_samples_by_field.values(),
                 model.id_label_dicts,
             ):
-                ic(posterior_samples.shape)
                 probs = posterior_samples.squeeze(-3).squeeze(-3)
                 mean_probs = probs.mean(0)
                 median_probs = probs.median(0)[0]

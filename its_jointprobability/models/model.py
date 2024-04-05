@@ -11,7 +11,6 @@ import pyro
 import pyro.infer
 import pyro.optim
 import torch
-from icecream import ic
 from its_jointprobability.utils import (
     Data_Loader,
     Quality_Result,
@@ -245,8 +244,6 @@ class Simple_Model:
     ):
         return_sites = return_sites or self.return_sites
         bow_tensor = texts_to_bow_tensor(*texts, tokens=tokens).int()
-        ic(bow_tensor)
-        ic(torch.arange(len(tokens)).repeat_interleave(bow_tensor[0]))
 
         bow_tensor = bow_tensor.expand([num_samples * bow_tensor.shape[-2], -1])
 
