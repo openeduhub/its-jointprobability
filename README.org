@@ -628,3 +628,11 @@ The Python library is provided as an output (~lib.${system}.its-jointprobability
     { ... };
 }
 #+end_src
+
+* Model Details and Possible Improvements
+
+The model is based on the [[https://pyro.ai/examples/prodlda.html][example implementation]] of [[https://arxiv.org/abs/1703.01488][the ProdLDA model (arXiv:1703.01488)]] in [[https://pyro.ai/][Pyro]], utilizing black-box variational inference. We modified this unsupervised topic model by introducing a linear relationship between the assigned topic mixture and each category of each metadata field to be predicted. Individual categories between different metadata fields are modeled to be independent.
+
+This could be improved in various ways in the future:
+1. Dependencies between categories (within individual metadata fields and between them) could be modeled. This could improve performance, especially when doing classification on partially labeled data (e.g. some categories or whole metadata fields are already given).
+2. The relationship between topic mixture and metadata field categories is drawn from a global, unchanging distribution. Similarly to the variational parameters of the topic mixture, this relationship could instead be drawn from a document-specific distribution through a variational auto-encoder, thus increasing the expressiveness of the model.
