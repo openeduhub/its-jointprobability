@@ -255,6 +255,7 @@
             default = (
               get-devShell (get-pkgs {
                 cudaSupport = false;
+                withOptuna = true;
               })
             );
           }
@@ -264,6 +265,7 @@
             with-cuda = (
               get-devShell (get-pkgs {
                 cudaSupport = true;
+                withOptuna = true;
               })
             );
           });
