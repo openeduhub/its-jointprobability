@@ -58,8 +58,6 @@ def run_optuna_study(
             {key: value[indices] for key, value in train_targets.items()},
         )
 
-    ic({key: value.sum(-2) for key, value in train_targets.items()})
-
     def get_eval_fun(
         field: str,
         docs: torch.Tensor,
