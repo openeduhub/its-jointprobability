@@ -457,8 +457,14 @@ class ProdSLDA(Model):
     def clean_up_posterior_samples(
         self, posterior_samples: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
+        # the following sites have a leading dummy-dimension during posterior
+        # sampling. drop them before returning the samples
         if "nu" in posterior_samples:
-            posterior_samples["nu"] = posterior_samples["nu"].squeeze(-3)
+            posterior_samples["nu"].squeeze_(-3)
+
+        for prediction_site in self.prediction_sites.values():
+            if prediction_site in posterior_samples:
+                posterior_samples[prediction_site].squeeze_(-3)
 
         return posterior_samples
 

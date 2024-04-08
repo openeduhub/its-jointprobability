@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from pprint import pprint
 from typing import Any, Optional
 
@@ -24,7 +24,6 @@ from its_jointprobability.utils import (
 from pydantic import BaseModel, Field
 from pyro.nn.module import PyroModule
 from tqdm import tqdm, trange
-from icecream import ic
 
 
 class Prediction_Score(BaseModel):
@@ -36,6 +35,17 @@ class Prediction_Score(BaseModel):
     median_prob: float
     baseline_diff: float
     prob_interval: list[float] = Field(min_length=2, max_length=2)
+
+
+def iterate_over_independent_samples(
+    samples: dict[str, torch.Tensor], dim: int = 0
+) -> Iterator[dict[str, torch.Tensor]]:
+    """Iterate over the left-most dimension of the given per-field samples."""
+    # swap dimensions such that the dimension to iterate over is left-most
+    samples = {key: value.swapaxes(0, dim) for key, value in samples.items()}
+    for sample in zip(*samples.values()):
+        sample = list(sample)
+        yield dict(zip(samples.keys(), sample))
 
 
 class Simple_Model:
@@ -279,19 +289,37 @@ class Simple_Model:
         tokens: Sequence[str],
         num_samples: int = 1000,
         return_sites: Optional[Collection[str]] = None,
-    ):
+    ) -> dict[str, torch.Tensor]:
         return_sites = return_sites or self.return_sites
-        bow_tensor = texts_to_bow_tensor(*texts, tokens=tokens).int()
 
-        bow_tensor = bow_tensor.expand([num_samples * bow_tensor.shape[-2], -1])
+        # because we usually use significantly higher numbers of samples here,
+        # use the fact that each document is assumed to be independent and
+        # simply represent the number of samples as a duplication of the
+        # inputs. this allows use to utilize the usual batching methodology
+        bow_tensor = (
+            texts_to_bow_tensor(*texts, tokens=tokens)
+            .int()
+            .expand([num_samples, -1, -1])
+            .reshape([num_samples * len(texts), -1])
+        )
 
-        return self.draw_posterior_samples(
+        posterior_samples = self.draw_posterior_samples(
             data_loader=sequential_data_loader(
                 bow_tensor, device=self.device, dtype=torch.float
             ),
             num_samples=1,
             return_sites=return_sites,
+            parallel_sample=True,
         )
+
+        # convert the flattened shape=[batch * docs, target] samples back into
+        # their usual [batch, docs, target] shape
+        posterior_samples = {
+            key: value.reshape([num_samples, len(texts), -1])
+            for key, value in posterior_samples.items()
+        }
+
+        return posterior_samples
 
     def calculate_metrics(
         self,
@@ -344,11 +372,13 @@ class Simple_Model:
             progress_bar=True,
         )
 
-        prediction_scores = self._predict_from_posterior_samples(
-            baseline_samples,
-            interval_size=0.0,
-            # avoid infinite recursion
-            compute_baselines=False,
+        prediction_scores = next(
+            self._predict_from_posterior_samples(
+                iterate_over_independent_samples(baseline_samples),
+                interval_size=0.0,
+                # avoid infinite recursion
+                compute_baselines=False,
+            )
         )
 
         self._baselines = {
@@ -359,71 +389,69 @@ class Simple_Model:
 
     def _predict_from_posterior_samples(
         self,
-        posterior_samples_by_field: Mapping[str, torch.Tensor],
+        posterior_samples_by_text: Iterable[Mapping[str, torch.Tensor]],
         interval_size: float,
         compute_baselines: bool = True,
-    ) -> dict[str, list[Prediction_Score]]:
-        predictions: dict[str, list[Prediction_Score]] = dict()
+    ) -> Iterator[dict[str, list[Prediction_Score]]]:
+        for posterior_samples_by_field in posterior_samples_by_text:
+            predictions: dict[str, list[Prediction_Score]] = dict()
 
-        for field, posterior_samples, id_label_dict in zip(
-            self.target_names,
-            posterior_samples_by_field.values(),
-            self.id_label_dicts,
-        ):
-            probs = posterior_samples.squeeze(-3).squeeze(-3)
-            mean_probs = probs.mean(0)
-            median_probs = probs.median(0)[0]
-            intervals: list[list[float]] = (
-                pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T
-            ).tolist()
+            for field, posterior_samples, id_label_dict in zip(
+                self.target_names,
+                posterior_samples_by_field.values(),
+                self.id_label_dicts,
+            ):
+                probs = posterior_samples
+                mean_probs = probs.mean(0)
+                median_probs = probs.median(0)[0]
+                intervals: list[list[float]] = (
+                    pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T
+                ).tolist()
 
-            mean_prob_diffs = torch.zeros_like(mean_probs)
-            if compute_baselines:
-                mean_prob_diffs = mean_probs - torch.tensor(
-                    self.get_baseline_dists()[field]
-                )
+                mean_prob_diffs = torch.zeros_like(mean_probs)
+                if compute_baselines:
+                    mean_prob_diffs = mean_probs - torch.tensor(
+                        self.get_baseline_dists()[field]
+                    )
 
-            prediction = [
-                Prediction_Score(
-                    id=uri,
-                    name=label,
-                    mean_prob=float(mean_prob),
-                    baseline_diff=mean_prob_diff,
-                    median_prob=float(median_prob),
-                    prob_interval=interval,
-                )
-                for label, uri, mean_prob, mean_prob_diff, median_prob, interval in zip(
-                    id_label_dict.values(),
-                    id_label_dict.keys(),
-                    mean_probs,
-                    mean_prob_diffs,
-                    median_probs,
-                    intervals,
-                )
-            ]
-            predictions[field] = prediction
+                prediction = [
+                    Prediction_Score(
+                        id=uri,
+                        name=label,
+                        mean_prob=float(mean_prob),
+                        baseline_diff=mean_prob_diff,
+                        median_prob=float(median_prob),
+                        prob_interval=interval,
+                    )
+                    for label, uri, mean_prob, mean_prob_diff, median_prob, interval in zip(
+                        id_label_dict.values(),
+                        id_label_dict.keys(),
+                        mean_probs,
+                        mean_prob_diffs,
+                        median_probs,
+                        intervals,
+                    )
+                ]
+                predictions[field] = prediction
 
-        return predictions
+            yield predictions
 
-    def predict(
+    def predict_from_texts(
         self,
-        text: str,
+        *texts: str,
         tokens: Sequence[str],
         num_samples: int = 100,
         interval_size: float = 0.8,
-    ) -> dict[str, list[Prediction_Score]]:
-        try:
-            posterior_samples_by_field = self.draw_posterior_samples_from_texts(
-                text,
-                tokens=tokens,
-                num_samples=num_samples,
-                return_sites=self.prediction_sites.values(),
-            )
-        except RuntimeError:
-            return dict()
+    ) -> Iterator[dict[str, list[Prediction_Score]]]:
+        posterior_samples = self.draw_posterior_samples_from_texts(
+            *texts,
+            tokens=tokens,
+            num_samples=num_samples,
+            return_sites=self.prediction_sites.values(),
+        )
 
         return self._predict_from_posterior_samples(
-            posterior_samples_by_field,
+            iterate_over_independent_samples(posterior_samples, dim=-2),
             interval_size=interval_size,
         )
 
