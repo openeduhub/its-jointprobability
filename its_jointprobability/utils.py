@@ -70,21 +70,27 @@ def texts_to_bow_tensor(
     tokens_set = set(tokens)
     # tokenize the text
     docs = list(tokenize_documents(texts, nlp.tokenize_as_lemmas))
-    # select only the tokens from the dictionary
-    docs_as_tensor = torch.stack(
-        [
-            torch.tensor(
-                [
-                    tokens.index(token.lower())
-                    for token in doc
-                    if token.lower() in tokens_set
-                ],
-                device=device,
-            )
-            for doc in docs
-        ]
-    )
-    return F.one_hot(docs_as_tensor, num_classes=len(tokens)).sum(-2).float()
+
+    def to_index_tensor(doc) -> torch.Tensor:
+        # select only the tokens from the given token sequence
+        return torch.tensor(
+            [
+                tokens.index(token.lower())
+                for token in doc
+                if token.lower() in tokens_set
+            ],
+            device=device,
+        )
+
+    docs_as_tensors = (to_index_tensor(doc) for doc in docs)
+    docs_as_bows = [
+        F.one_hot(doc, num_classes=len(tokens)).sum(-2).float()
+        # if the document contains no known tokens, the BoW is simply all zeros
+        if len(doc) > 0 else torch.zeros(len(tokens)).float()
+        for doc in docs_as_tensors
+    ]
+
+    return torch.stack(docs_as_bows)
 
 
 Batch_Strategy = Iterator[tuple[bool, list[int]]]
