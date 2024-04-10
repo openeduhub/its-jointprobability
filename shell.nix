@@ -1,6 +1,6 @@
 {
   lib,
-  system,
+  stdenv,
   mkShell,
   python3,
   pyright,
@@ -23,7 +23,7 @@ mkShell {
         mypy
       ]
       # pandas-stubs appears to be broken on darwin systems
-      ++ (lib.lists.optionals (system != "x86_64-darwin" || system != "aarch64-darwin") [
+      ++ (lib.optionals stdenv.isDarwin [
         py-pkgs.pandas-stubs
       ])
       ++ (py-pkgs.callPackage ./python-lib.nix {
