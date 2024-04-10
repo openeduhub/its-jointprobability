@@ -132,7 +132,8 @@ predictions = list(
 #+end_src
 
 #+RESULTS:
-: posterior sample: 100%|█████████████████████████████████████████████| 4/4 [00:03<00:00,  1.07it/s]
+: posterior sample: 100% 4/4 [00:03<00:00,  1.12it/s]
+: posterior sample: 100% 19/19 [00:18<00:00,  1.00it/s]
 
 #+begin_src python
 from pprint import pprint
@@ -171,34 +172,34 @@ for text, prediction in zip(texts, predictions):
 Most relevant
 -------------
 Der Satz des Pythagoras lautet: a^2 + b^2 = c^2
-[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/380', name='Mathematik', mean_prob=0.27944332361221313, median_prob=0.24694432318210602, baseline_diff=0.10042114555835724, prob_interval=[0.0388295017182827, 0.4267595112323761]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/28002', name='Deutsch als Zweitsprache', mean_prob=0.21281304955482483, median_prob=0.17257189750671387, baseline_diff=0.03634059429168701, prob_interval=[0.027570998296141624, 0.3362984359264374]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/100', name='Chemie', mean_prob=0.23370221257209778, median_prob=0.1889934241771698, baseline_diff=0.03306618332862854, prob_interval=[0.017942987382411957, 0.3620057702064514]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/060', name='Kunst', mean_prob=0.22520403563976288, median_prob=0.19244062900543213, baseline_diff=0.031922951340675354, prob_interval=[0.01242774073034525, 0.35103291273117065]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/420', name='Musik', mean_prob=0.23455028235912323, median_prob=0.20069579780101776, baseline_diff=0.03187155723571777, prob_interval=[0.025555800646543503, 0.3596491813659668])]
+[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/380', name='Mathematik', mean_prob=0.27252691984176636, median_prob=0.2375515103340149, baseline_diff=0.08902664482593536, prob_interval=[0.03836498036980629, 0.4274231195449829]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/400', name='Mediendidaktik', mean_prob=0.20079974830150604, median_prob=0.16239628195762634, baseline_diff=0.04250064492225647, prob_interval=[0.02097034826874733, 0.31550872325897217]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/44099', name='Open Educational Resources', mean_prob=0.19592401385307312, median_prob=0.1562144011259079, baseline_diff=0.02785569429397583, prob_interval=[0.028453882783651352, 0.3012710511684418]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/04014', name='Arbeitssicherheit', mean_prob=0.2014719545841217, median_prob=0.16092683374881744, baseline_diff=0.025998622179031372, prob_interval=[0.012373332865536213, 0.31377604603767395]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/44007', name='Sozialpädagogik', mean_prob=0.17032858729362488, median_prob=0.13969334959983826, baseline_diff=0.024959757924079895, prob_interval=[0.015507511794567108, 0.2542083263397217])]
 
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/420', name='Musik', mean_prob=0.2595520317554474, median_prob=0.22745786607265472, baseline_diff=0.05687330663204193, prob_interval=[0.03449495881795883, 0.3924587070941925]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/28002', name='Deutsch als Zweitsprache', mean_prob=0.2273254692554474, median_prob=0.1889670342206955, baseline_diff=0.05085301399230957, prob_interval=[0.02286703512072563, 0.3461809456348419]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/060', name='Kunst', mean_prob=0.240683913230896, median_prob=0.2017228603363037, baseline_diff=0.04740282893180847, prob_interval=[0.01592974178493023, 0.37811338901519775]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/380', name='Mathematik', mean_prob=0.21490953862667084, median_prob=0.18005557358264923, baseline_diff=0.03588736057281494, prob_interval=[0.01960422471165657, 0.3286705017089844]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/240', name='Geschichte', mean_prob=0.4241379201412201, median_prob=0.40612372756004333, baseline_diff=0.03302392363548279, prob_interval=[0.17552116513252258, 0.7081797122955322])]
+[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/400', name='Mediendidaktik', mean_prob=0.21222397685050964, median_prob=0.1725321114063263, baseline_diff=0.05392487347126007, prob_interval=[0.02645198069512844, 0.35374367237091064]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/20002', name='Französisch', mean_prob=0.24668413400650024, median_prob=0.2100289762020111, baseline_diff=0.047679975628852844, prob_interval=[0.026496760547161102, 0.3796420097351074]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/44006', name='Sonderpädagogik', mean_prob=0.21014226973056793, median_prob=0.16691946983337402, baseline_diff=0.03631836175918579, prob_interval=[0.012180385179817677, 0.33394092321395874]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/160', name='Ethik', mean_prob=0.22378790378570557, median_prob=0.19213445484638214, baseline_diff=0.035237476229667664, prob_interval=[0.027888188138604164, 0.3623582422733307]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/380', name='Mathematik', mean_prob=0.21647676825523376, median_prob=0.16698753833770752, baseline_diff=0.03297649323940277, prob_interval=[0.020263776183128357, 0.3488425314426422])]
 
 Least relevant
 --------------
 Der Satz des Pythagoras lautet: a^2 + b^2 = c^2
-[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/720', name='Allgemein', mean_prob=0.3364558219909668, median_prob=0.30854061245918274, baseline_diff=-0.05346140265464783, prob_interval=[0.07414110749959946, 0.5147775411605835]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/240', name='Geschichte', mean_prob=0.35169437527656555, median_prob=0.3223041296005249, baseline_diff=-0.03941962122917175, prob_interval=[0.0584481917321682, 0.545474648475647]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/220', name='Geografie', mean_prob=0.14758476614952087, median_prob=0.11472930014133453, baseline_diff=-0.03755566477775574, prob_interval=[0.009165754541754723, 0.23171977698802948]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/44006', name='Sonderpädagogik', mean_prob=0.1432400345802307, median_prob=0.10890087485313416, baseline_diff=-0.03750568628311157, prob_interval=[0.011584857478737831, 0.22065022587776184]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/20002', name='Französisch', mean_prob=0.16282281279563904, median_prob=0.12668158113956451, baseline_diff=-0.0337987095117569, prob_interval=[0.017661018297076225, 0.26050472259521484])]
+[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/240', name='Geschichte', mean_prob=0.3266444802284241, median_prob=0.29558679461479187, baseline_diff=-0.08436188101768494, prob_interval=[0.06395381689071655, 0.513274610042572]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/64018', name='Nachhaltigkeit', mean_prob=0.15481287240982056, median_prob=0.12479785084724426, baseline_diff=-0.04677225649356842, prob_interval=[0.009936170652508736, 0.238087460398674]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/04005', name='Elektrotechnik', mean_prob=0.14669086039066315, median_prob=0.11050695925951004, baseline_diff=-0.03920416533946991, prob_interval=[0.010430517606437206, 0.23249176144599915]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/900', name='Medienbildung', mean_prob=0.18447546660900116, median_prob=0.143831267952919, baseline_diff=-0.03595893085002899, prob_interval=[0.020866503939032555, 0.29167866706848145]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/04011', name='Metalltechnik', mean_prob=0.12942147254943848, median_prob=0.10473495721817017, baseline_diff=-0.03176121413707733, prob_interval=[0.010282553732395172, 0.19191618263721466])]
 
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/44006', name='Sonderpädagogik', mean_prob=0.13579390943050385, median_prob=0.0976625308394432, baseline_diff=-0.04495181143283844, prob_interval=[0.00988431554287672, 0.21791331470012665]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/220', name='Geografie', mean_prob=0.1468999981880188, median_prob=0.11286960542201996, baseline_diff=-0.03824043273925781, prob_interval=[0.019218681380152702, 0.23849642276763916]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/510', name='Psychologie', mean_prob=0.1640857458114624, median_prob=0.12646180391311646, baseline_diff=-0.036357998847961426, prob_interval=[0.01115802675485611, 0.24925848841667175]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/720', name='Allgemein', mean_prob=0.35638585686683655, median_prob=0.3374437689781189, baseline_diff=-0.033531367778778076, prob_interval=[0.06750967353582382, 0.5515246987342834]),
- Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/400', name='Mediendidaktik', mean_prob=0.17134949564933777, median_prob=0.13205400109291077, baseline_diff=-0.028871551156044006, prob_interval=[0.021074065938591957, 0.27854123711586])]
+[Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/64018', name='Nachhaltigkeit', mean_prob=0.151003897190094, median_prob=0.1168498769402504, baseline_diff=-0.05058123171329498, prob_interval=[0.018730375915765762, 0.23541297018527985]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/04005', name='Elektrotechnik', mean_prob=0.14392922818660736, median_prob=0.11002340912818909, baseline_diff=-0.041965797543525696, prob_interval=[0.01008471567183733, 0.22575043141841888]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/04011', name='Metalltechnik', mean_prob=0.12236656248569489, median_prob=0.08735257387161255, baseline_diff=-0.03881612420082092, prob_interval=[0.0064668068662285805, 0.18605364859104156]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/72001', name='Zeitgemäße Bildung', mean_prob=0.1414533108472824, median_prob=0.10465358942747116, baseline_diff=-0.03346985578536987, prob_interval=[0.009646143764257431, 0.22923143208026886]),
+ Prediction_Score(id='http://w3id.org/openeduhub/vocabs/discipline/240', name='Geschichte', mean_prob=0.37926897406578064, median_prob=0.3509242534637451, baseline_diff=-0.03173738718032837, prob_interval=[0.06747578829526901, 0.5976729989051819])]
 #+end_example
 
 * REST API
