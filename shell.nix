@@ -23,7 +23,7 @@ mkShell {
         mypy
       ]
       # pandas-stubs appears to be broken on darwin systems
-      ++ (lib.optionals stdenv.isDarwin [
+      ++ (lib.optionals (!stdenv.isDarwin) [
         py-pkgs.pandas-stubs
       ])
       ++ (py-pkgs.callPackage ./python-lib.nix {
