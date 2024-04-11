@@ -715,7 +715,7 @@ The model is based on the [[https://pyro.ai/examples/prodlda.html][example imple
 
 This could be improved in various ways in the future:
 1. Dependencies between categories (within individual metadata fields and between them) could be modeled. This could improve performance, especially when doing classification on partially labeled data (e.g. some categories or whole metadata fields are already given).
-2. The relationship between topic mixture and metadata field categories is drawn from a global, unchanging distribution. Similarly to the variational parameters of the topic mixture, this relationship could instead be drawn from a document-specific distribution through a variational auto-encoder, thus increasing the expressiveness of the model.
+2. The relationship between topic mixture and metadata field categories is drawn from a global, unchanging distribution. Similarly to the variational parameters of the topic mixture, this relationship could instead be drawn from a document-specific distribution through a neural network, thus increasing the expressiveness of the model.
 3. Rather than using the (naive, if pre-processed) bag-of-words representations of documents, utilize modern vectorization methods instead (see [[https://dl.acm.org/doi/abs/10.1145/2911451.2911499][Topic Modeling for Short Texts with Auxiliary Word Embeddings]] or [[https://arxiv.org/abs/2403.03737][Probabilistic Topic Modelling with Transformer Representations]]).
    
 * Installation (through ~Nix Flakes~)
