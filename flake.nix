@@ -69,6 +69,15 @@
               allowUnfree = true;
             };
             overlays = [
+              # manually provide py3langid here, because we are using an old
+              # version of nixpkgs
+              (final: prev: {
+                pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+                  (py-final: py-prev: {
+                    py3langid = py-final.callPackage ./pkgs/py3langid.nix {};
+                  })
+                ];
+              })
               self.outputs.overlays.python-lib
               self.outputs.overlays.its-jointprobability
               self.inputs.its-data.overlays.default
