@@ -2,7 +2,7 @@
   description = "A Bayesian approach to metadata prediction in education";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
     flake-utils.url = "github:numtide/flake-utils";
     nix-filter.url = "github:numtide/nix-filter";
     openapi-checks = {
@@ -69,12 +69,12 @@
               allowUnfree = true;
             };
             overlays = [
-              # manually provide py3langid here, because we are using an old
-              # version of nixpkgs
               (final: prev: {
                 pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
                   (py-final: py-prev: {
-                    py3langid = py-final.callPackage ./pkgs/py3langid.nix {};
+                    # manually provide py3langid here, because we are using an
+                    # old version of nixpkgs
+                    py3langid = py-final.callPackage ./pkgs/py3langid.nix { };
                   })
                 ];
               })
