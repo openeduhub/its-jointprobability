@@ -156,8 +156,10 @@ def main():
     # text.
     # TODO: move this to post model training and save the baseline
     # distributions
-    model.predict_from_texts(
-        model.vocab[0] + model.vocab[1], tokens=model.vocab, num_samples=1
+    list(
+        model.predict_from_texts(
+            model.vocab[0] + model.vocab[1], tokens=model.vocab, num_samples=1
+        )
     )
 
     print(f"running on device {model.device}")

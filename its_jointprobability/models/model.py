@@ -34,7 +34,7 @@ class Prediction_Score(BaseModel):
     mean_prob: float
     median_prob: float
     baseline_diff: float
-    prob_interval: list[float] = Field(min_length=2, max_length=2)
+    prob_interval: list[float] = Field(min_size=2, max_size=2)
 
 
 def iterate_over_independent_samples(
