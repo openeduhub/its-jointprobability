@@ -50,7 +50,7 @@ def main():
 
         text: str
         num_samples: int = Field(
-            default=100 if not debug else 2, gt=1, le=100000 if not debug else 10
+            default=500 if not debug else 2, gt=1, le=100000 if not debug else 10
         )
         num_predictions: int = Field(default=10, gt=0)
         interval_size: float = Field(default=0.8, gt=0.0, lt=1.0)

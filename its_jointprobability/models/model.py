@@ -34,7 +34,7 @@ class Prediction_Score(BaseModel):
     mean_prob: float
     median_prob: float
     baseline_diff: float
-    prob_interval: list[float] = Field(min_size=2, max_size=2)
+    prob_interval: tuple[float, float] = Field(examples=[(0.1, 0.5), (0.0, 1.0)])
 
 
 def iterate_over_independent_samples(
@@ -404,9 +404,12 @@ class Simple_Model:
                 probs = posterior_samples
                 mean_probs = probs.mean(0)
                 median_probs = probs.median(0)[0]
-                intervals: list[list[float]] = (
-                    pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T
-                ).tolist()
+                intervals: list[tuple[float, float]] = [
+                    tuple(interval.tolist())
+                    for interval in (
+                        pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T
+                    )
+                ]
 
                 mean_prob_diffs = torch.zeros_like(mean_probs)
                 if compute_baselines:
