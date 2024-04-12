@@ -1,6 +1,6 @@
 import argparse
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -33,6 +33,17 @@ from its_jointprobability.utils import (
     default_data_loader,
     sequential_data_loader,
 )
+from torch.distributions import constraints
+
+
+class Parameters(NamedTuple):
+    # parameters for the per-document topic mixture
+    logtheta: tuple[torch.Tensor, torch.Tensor]
+    # parameters for the global relationship between topics and target
+    # categories
+    nu: tuple[torch.Tensor, torch.Tensor]
+    # the scale of the per-document target category applicability
+    a_scale: torch.Tensor
 
 
 class ProdSLDA(Model):
@@ -51,8 +62,6 @@ class ProdSLDA(Model):
         num_topics: int = 500,
         nu_loc: float = -6.7,
         nu_scale: float = 0.85,
-        correlated_nus: bool = False,
-        cov_rank: Optional[int] = None,
         mle_priors: bool = True,
         # variational auto-encoder settings
         hid_size: int = 1000,
@@ -91,16 +100,6 @@ class ProdSLDA(Model):
         :param nu_scale: The (initial) prior standard deviation for the
             applicability coefficient that links topics to targets. The default
             value was chosen through hyperparameter optimization.
-        :param correlated_nus: Whether to model the prior and posterior
-            distribution of nu such that each applicabilities for different
-            topic-category-pairs may be correlated. The default value was
-            chosen through hyperparameter optimization, and was found to barely
-            affect the quality of the predictions.
-        :param cov_rank: The rank of the covariance matrix to use when allowing
-            correlation between different topic-category pairs. Only relevant
-            if ``correlated_nus`` is set to True. If set to None, the square
-            root of the number of total categories between all fields is
-            chosen.
         :param mle_priors: Whether to adjust the priors during optimization to
             match their corresponding maximum likelihood estimators.
             Note that setting this to True results in a different prior
@@ -168,18 +167,12 @@ class ProdSLDA(Model):
         self.target_names = list(target_names)
         self.target_sizes = target_sizes
         self.num_topics = num_topics
-        self.cov_rank = (
-            cov_rank
-            if cov_rank is not None
-            else math.ceil(math.sqrt(sum(target_sizes)))
-        )
         self.hid_size = hid_size
         self.hid_num = hid_num
         self.hid_size_factor = hid_size_factor
         self.dropout = dropout
         self.nu_loc = float(nu_loc)
         self.nu_scale = float(nu_scale)
-        self.correlated_nus = correlated_nus
         self.mle_priors = mle_priors
         self.device = device
 
@@ -238,99 +231,30 @@ class ProdSLDA(Model):
         obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
         **kwargs,
     ):
-        n = sum(self.target_sizes)
-        # if no observations mask has been given, ignore any docs that
-        # do not have any assigned labels for that given target
-        # or any non-assigned labels (depending on the model}s settings)
-        if obs_masks is None:
-            obs_masks = self._get_obs_mask(*targets)
+        model_params = self.model_params(docs)
+        nu = self.nu_dist(*model_params.nu)
 
-        docs_plate = pyro.plate("documents_plate", docs.shape[-2], dim=-1)
+        with pyro.plate("documents_plate", docs.shape[-2], dim=-1):
+            theta = self.theta_dist(*model_params.logtheta)
 
-        # nu is the matrix mapping the relationship between latent topic
-        # and targets
-        size_tensor = torch.tensor(self.target_sizes, device=docs.device)
-        nu_loc_fun = (
-            lambda: self.nu_loc
-            * docs.new_ones([self.num_topics, n])
-            * torch.repeat_interleave(1 / size_tensor, size_tensor)
-        )
-        nu_scale_fun = lambda: self.nu_scale * docs.new_ones([self.num_topics, n])
-        nu_loc = pyro.param("nu_loc", nu_loc_fun) if self.mle_priors else nu_loc_fun()
-        nu_scale = (
-            pyro.param("nu_scale", nu_scale_fun, constraint=dist.constraints.positive)
-            if self.mle_priors
-            else nu_scale_fun()
-        )
-        with pyro.poutine.scale(None, self.annealing_factor):
-            nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
+            # draw from the prior distribution on the document contents, which
+            # depend on the particular per-document topic mixture
+            self.docs_dist(obs=docs, theta=theta)
 
-        with docs_plate:
-            # theta is each document's topic applicability
-            logtheta_loc_fun = lambda: docs.new_zeros(self.num_topics)
-            logtheta_scale_fun = lambda: docs.new_ones(self.num_topics)
-            logtheta_loc = (
-                pyro.param("logtheta_loc", logtheta_loc_fun)
-                if self.mle_priors
-                else logtheta_loc_fun()
-            )
-            logtheta_scale = (
-                pyro.param(
-                    "logtheta_scale",
-                    logtheta_scale_fun,
-                    constraint=dist.constraints.positive,
-                )
-                if self.mle_priors
-                else logtheta_scale_fun()
-            )
-            with pyro.poutine.scale(None, self.annealing_factor):
-                logtheta = pyro.sample(
-                    "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
-                )
-            theta = F.softmax(logtheta, -1)
-
-            # get each document's word distribution from the decoder.
-            count_param = self.count_param(theta)
-
-            # the distribution of the actual document contents.
-            # Currently, PyTorch Multinomial requires `total_count` to be
-            # homogeneous. Because the numbers of words across documents can
-            # vary, we will use the maximum count accross documents here. This
-            # does not affect the result, because Multinomial.log_prob does not
-            # require `total_count` to evaluate the log probability.
-            total_count = int(docs.sum(-1).max())
-            pyro.sample(
-                "obs",
-                dist.Multinomial(total_count, count_param),
-                obs=docs,
+            target_probs = self.target_probs_dist(
+                theta=theta, nu=nu, a_scale=model_params.a_scale
             )
 
-            # a is the log-applicability of each target category for each doc
-            with pyro.poutine.scale(None, self.annealing_factor):
-                a = pyro.sample(
-                    "a",
-                    dist.Normal(torch.matmul(theta, nu), 1).to_event(1),
-                )
+            # log the draw target probabilities
+            for target_name, target_probs_local in zip(self.target_names, target_probs):
+                pyro.deterministic(f"probs_{target_name}", target_probs_local)
 
-            probs_col = [
-                pyro.deterministic(f"probs_{self.target_names[i]}", F.sigmoid(a_local))
-                for i, a_local in enumerate(a.split(self.target_sizes, -1))
-            ]
-
-            # the distribution over each target
-            for i, probs in enumerate(probs_col):
-                with pyro.plate(f"target_{i}_plate", probs.shape[-1]):
-                    targets_i = targets[i] if len(targets) > i else None
-                    obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
-                    target = pyro.sample(
-                        f"target_{self.target_names[i]}",
-                        dist.Bernoulli(probs.swapaxes(-1, -2)),  # type: ignore
-                        obs=targets_i.swapaxes(-1, -2)
-                        if targets_i is not None
-                        else None,
-                        obs_mask=obs_masks_i,
-                        infer={"enumerate": "parallel"},
-                    ).swapaxes(-1, -2)
+            # draw from the prior distribution on the targets
+            self.targets_dist(
+                *targets,
+                target_probs=target_probs,
+                obs_masks=obs_masks,
+            )
 
     def guide(
         self,
@@ -338,80 +262,199 @@ class ProdSLDA(Model):
         *targets: torch.Tensor | None,
         obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
     ):
+        guide_params = self.guide_params(docs)
+
+        nu_q = self.nu_dist(*guide_params.nu)
+
+        with pyro.plate("documents_plate", docs.shape[-2], dim=-1):
+            theta_q = self.theta_dist(*guide_params.logtheta)
+            target_probs_q = self.target_probs_dist(
+                theta=theta_q, nu=nu_q, a_scale=guide_params.a_scale
+            )
+
+            # draw from the variational distribution of the targets for
+            # unobserved data
+            targets_q = self.targets_dist(
+                target_probs=target_probs_q,
+                suffix="_unobserved",
+            )
+
+    def model_params(self, docs: torch.Tensor) -> Parameters:
         n = sum(self.target_sizes)
+
+        nu_loc_fun = lambda: self.nu_loc * docs.new_zeros([self.num_topics, n])
+        nu_scale_fun = lambda: self.nu_scale * docs.new_ones([self.num_topics, n])
+
+        nu_loc = pyro.param("nu_loc", nu_loc_fun) if self.mle_priors else nu_loc_fun()
+        nu_scale = (
+            pyro.param("nu_scale", nu_scale_fun, constraint=constraints.positive)
+            if self.mle_priors
+            else nu_scale_fun()
+        )
+
+        # the prior on the topic mixture distribution is constant between
+        # documents
+        logtheta_loc_fun = lambda: docs.new_zeros(self.num_topics)
+        logtheta_scale_fun = lambda: docs.new_ones(self.num_topics)
+
+        logtheta_loc = (
+            pyro.param("logtheta_loc", logtheta_loc_fun)
+            if self.mle_priors
+            else logtheta_loc_fun()
+        )
+        logtheta_scale = (
+            pyro.param(
+                "logtheta_scale",
+                logtheta_scale_fun,
+                constraint=constraints.positive,
+            )
+            if self.mle_priors
+            else logtheta_scale_fun()
+        )
+
+        # the prior on the scale of the category applicability distribution is
+        # constant between documents
+        a_scale_fun = lambda: docs.new_ones([n])
+        a_scale = (
+            pyro.param("a_scale", a_scale_fun, constraint=constraints.positive)
+            if self.mle_priors
+            else a_scale_fun()
+        )
+
+        return Parameters(
+            logtheta=(logtheta_loc, logtheta_scale),
+            nu=(nu_loc, nu_scale),
+            a_scale=a_scale,
+        )
+
+    def guide_params(self, docs) -> Parameters:
+        n = sum(self.target_sizes)
+
+        # use random initialization for the variational parameters of nu
+        nu_q_loc = pyro.param(
+            "nu_q_loc", lambda: torch.randn([self.num_topics, n], device=docs.device)
+        )
+        nu_q_scale = pyro.param(
+            "nu_q_scale",
+            lambda: torch.randn([self.num_topics, n], device=docs.device).abs() + 1e-3,
+            constraint=constraints.positive,
+        )
+
+        # the variational parameters for (log)theta are given by the
+        # variational autoencoder
+        logtheta_q_params = self.logtheta_params(docs)
+
+        # use random initialization for the variational scale of the category
+        # applicability
+        a_q_scale = pyro.param(
+            "a_q_scale",
+            lambda: torch.randn([n], device=docs.device).abs() + 1e-3,
+            constraint=constraints.positive,
+        )
+
+        return Parameters(
+            logtheta=logtheta_q_params, nu=(nu_q_loc, nu_q_scale), a_scale=a_q_scale
+        )
+
+    def docs_dist(self, obs: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        # get each document's word distribution from the decoder.
+        count_param = self.count_param(theta)
+
+        # the distribution of the actual document contents.
+        # Currently, PyTorch Multinomial requires `total_count` to be
+        # homogeneous. Because the numbers of words across documents can
+        # vary, we will use the maximum count accross documents here. This
+        # does not affect the result, because Multinomial.log_prob does not
+        # require `total_count` to evaluate the log probability.
+        total_count = int(obs.sum(-1).max())
+
+        return pyro.sample(
+            "docs",
+            dist.Multinomial(total_count, count_param),
+            obs=obs,
+        )
+
+    def nu_dist(self, nu_loc: torch.Tensor, nu_scale: torch.Tensor) -> torch.Tensor:
+        """
+        nu is the matrix mapping the relationship between latent topic and
+        targets
+        """
+        # this being a latent random variable, apply KL annealing
+        with pyro.poutine.scale(scale=self.annealing_factor):
+            nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
+
+        # if len(nu.shape) > 2 and nu.shape[-3] == 1:
+        #     nu.squeeze_(-3)
+
+        return nu
+
+    def theta_dist(
+        self, logtheta_loc: torch.Tensor, logtheta_scale: torch.Tensor
+    ) -> torch.Tensor:
+        """theta is each document's topic applicability"""
+        # this being a latent random variable, apply KL annealing
+        with pyro.poutine.scale(scale=self.annealing_factor):
+            logtheta = pyro.sample(
+                "logtheta", dist.Normal(logtheta_loc, logtheta_scale).to_event(1)
+            )
+
+        return F.softmax(logtheta, -1)
+
+    def target_probs_dist(
+        self, theta: torch.Tensor, nu: torch.Tensor, a_scale: torch.Tensor
+    ) -> list[torch.Tensor]:
+        """
+        return the randomly drawn probabilities of target categories applying.
+
+        Note that for convenience, these probabilities are already grouped by
+        the targets, such that res[i].shape == [self.target_sizes[i]]
+        for all i.
+        """
+        # this being a latent random variable, apply KL annealing
+        with pyro.poutine.scale(scale=self.annealing_factor):
+            a = pyro.sample(
+                "a",
+                dist.Normal(torch.matmul(theta, nu), a_scale).to_event(1),
+            )
+            # if len(a.shape) > 2 and a.shape[-3] == 1:
+            #     a.squeeze_(-3)
+
+        return [
+            F.sigmoid(a_local)
+            for _, a_local in enumerate(a.split(self.target_sizes, -1))
+        ]
+
+    def targets_dist(
+        self,
+        *targets: torch.Tensor | None,
+        target_probs: Iterable[torch.Tensor],
+        obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
+        suffix: str = "",
+    ) -> list[torch.Tensor]:
+        # if no observations mask has been given, ignore any docs that
+        # do not have any assigned labels for that given target
+        # or any non-assigned labels (depending on the model's settings)
         if obs_masks is None:
             obs_masks = self._get_obs_mask(*targets)
 
-        docs_plate = pyro.plate("documents_plate", docs.shape[-2], dim=-1)
+        drawn_targets: list[torch.Tensor] = list()
 
-        # variational parameters for the relationship between topics and targets
-        mu_q = pyro.param(
-            "mu", lambda: torch.randn(self.num_topics, n, device=docs.device)
-        )
-        cov_diag = pyro.param(
-            "cov_diag",
-            lambda: docs.new_ones(self.num_topics, n),
-            constraint=dist.constraints.positive,
-        )
-        with pyro.poutine.scale(None, self.annealing_factor):
-            if self.correlated_nus:
-                cov_factor = (
-                    pyro.param(
-                        "cov_factor",
-                        lambda: docs.new_ones(self.num_topics, n, self.cov_rank),
-                        constraint=dist.constraints.positive,
-                    )
-                    + 1e-7
-                )
+        for i, target_probs_i in enumerate(target_probs):
+            with pyro.plate(f"target_{i}_plate"):
+                obs_i = targets[i] if len(targets) > i else None
+                obs_masks_i = obs_masks[i] if len(obs_masks) > i else None
 
-                nu_q = pyro.sample(
-                    "nu",
-                    dist.LowRankMultivariateNormal(mu_q, cov_factor, cov_diag).to_event(
-                        1
-                    ),
-                )
-            else:
-                nu_q = pyro.sample(
-                    "nu",
-                    dist.Normal(mu_q, cov_diag).to_event(2),
-                )
-            if len(nu_q.shape) > 2 and nu_q.shape[-3] == 1:
-                nu_q.squeeze_(-3)
-
-        with docs_plate:
-            # theta is each document's topic applicability
-            with pyro.poutine.scale(None, self.annealing_factor):
-                logtheta_q = pyro.sample(
-                    "logtheta", dist.Normal(*self.logtheta_params(docs)).to_event(1)
-                )
-            theta_q = F.softmax(logtheta_q, -1)
-
-            a_q_scale = pyro.param(
-                "a_q_scale",
-                lambda: docs.new_ones(n),
-                constraint=dist.constraints.positive,
-            )
-
-            with pyro.poutine.scale(None, self.annealing_factor):
-                a_q = pyro.sample(
-                    "a",
-                    dist.Normal(torch.matmul(theta_q, nu_q), a_q_scale).to_event(1),
-                )
-
-            probs_q_col = [
-                F.sigmoid(a_local)
-                for _, a_local in enumerate(a_q.split(self.target_sizes, -1))
-            ]
-
-            for i, probs_q in enumerate(probs_q_col):
-                with pyro.plate(f"target_{i}_plate"):
-                    if len(probs_q.shape) > 2 and probs_q.shape[-3] == 1:
-                        probs_q.squeeze_(-3)
-                    target_q = pyro.sample(
-                        f"target_{self.target_names[i]}_unobserved",
-                        dist.Bernoulli(probs_q.swapaxes(-1, -2)),  # type: ignore
+                drawn_targets.append(
+                    pyro.sample(
+                        f"target_{self.target_names[i]}{suffix}",
+                        dist.Bernoulli(target_probs_i.swapaxes(-1, -2)),  # type: ignore
                         infer={"enumerate": "parallel"},
+                        obs_mask=obs_masks_i,  # type: ignore
+                        obs=obs_i,
                     ).swapaxes(-1, -2)
+                )
+
+        return drawn_targets
 
     def count_param(self, theta: torch.Tensor) -> torch.Tensor:
         pyro.module("decoder", self.decoder)
