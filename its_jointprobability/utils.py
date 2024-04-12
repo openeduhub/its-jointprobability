@@ -322,7 +322,7 @@ def quality_measures(
         print(f"{f1_scores.shape=}")
 
         # select the cutoff where the F1 score is maximized
-        if parallel_dim is not None:
+        if len(f1_scores.shape) > 1:
             # swapping the dimensions here makes this a bit more convenient
             cutoffs.swapaxes_(-1, -2)
             f1_scores.swapaxes_(-1, -2)
