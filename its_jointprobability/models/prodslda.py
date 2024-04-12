@@ -245,16 +245,16 @@ class ProdSLDA(Model):
                 theta=theta, nu=nu, a_scale=model_params.a_scale
             )
 
-            # log the draw target probabilities
-            for target_name, target_probs_local in zip(self.target_names, target_probs):
-                pyro.deterministic(f"probs_{target_name}", target_probs_local)
-
             # draw from the prior distribution on the targets
             self.targets_dist(
                 *targets,
                 target_probs=target_probs,
                 obs_masks=obs_masks,
             )
+
+        # log the drawn target probabilities
+        for target_name, target_probs_local in zip(self.target_names, target_probs):
+            pyro.deterministic(f"probs_{target_name}", target_probs_local)
 
     def guide(
         self,
@@ -383,8 +383,8 @@ class ProdSLDA(Model):
         with pyro.poutine.scale(scale=self.annealing_factor):
             nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
 
-        # if len(nu.shape) > 2 and nu.shape[-3] == 1:
-        #     nu.squeeze_(-3)
+        if len(nu.shape) > 2 and nu.shape[-3] == 1:
+            nu.squeeze_(-3)
 
         return nu
 
@@ -416,8 +416,8 @@ class ProdSLDA(Model):
                 "a",
                 dist.Normal(torch.matmul(theta, nu), a_scale).to_event(1),
             )
-            # if len(a.shape) > 2 and a.shape[-3] == 1:
-            #     a.squeeze_(-3)
+            if len(a.shape) > 2 and a.shape[-3] == 1:
+                a.squeeze_(-3)
 
         return [
             F.sigmoid(a_local)
@@ -450,7 +450,7 @@ class ProdSLDA(Model):
                         dist.Bernoulli(target_probs_i.swapaxes(-1, -2)),  # type: ignore
                         infer={"enumerate": "parallel"},
                         obs_mask=obs_masks_i,  # type: ignore
-                        obs=obs_i,
+                        obs=obs_i.swapaxes(-1, -2) if obs_i is not None else None,
                     ).swapaxes(-1, -2)
                 )
 
