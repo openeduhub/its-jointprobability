@@ -404,7 +404,7 @@ class Simple_Model:
                 probs = posterior_samples
                 mean_probs = probs.mean(0)
                 median_probs = probs.median(0)[0]
-                intervals: list[tuple[float, float]] = [
+                intervals: list[tuple[float, ...]] = [
                     tuple(interval.tolist())
                     for interval in (
                         pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T

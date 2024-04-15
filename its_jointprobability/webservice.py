@@ -158,7 +158,7 @@ def main():
     # distributions
     list(
         model.predict_from_texts(
-            model.vocab[0] + model.vocab[1], tokens=model.vocab, num_samples=1
+            model.vocab[0], model.vocab[1], tokens=model.vocab, num_samples=2
         )
     )
 

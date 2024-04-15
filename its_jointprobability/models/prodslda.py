@@ -263,7 +263,6 @@ class ProdSLDA(Model):
         obs_masks: Optional[Sequence[torch.Tensor | None]] = None,
     ):
         guide_params = self.guide_params(docs)
-
         nu_q = self.nu_dist(*guide_params.nu)
 
         with pyro.plate("documents_plate", docs.shape[-2], dim=-1):
@@ -416,8 +415,9 @@ class ProdSLDA(Model):
                 "a",
                 dist.Normal(torch.matmul(theta, nu), a_scale).to_event(1),
             )
-            if len(a.shape) > 2 and a.shape[-3] == 1:
-                a.squeeze_(-3)
+
+        if len(a.shape) > 2 and a.shape[-3] == 1:
+            a.squeeze_(-3)
 
         return [
             F.sigmoid(a_local)
@@ -503,11 +503,13 @@ class ProdSLDA(Model):
         # the following sites have a leading dummy-dimension during posterior
         # sampling. drop them before returning the samples
         if "nu" in posterior_samples:
-            posterior_samples["nu"].squeeze_(-3)
+            while len(posterior_samples["nu"].shape) > 3:
+                posterior_samples["nu"].squeeze_(-4)
 
         for prediction_site in self.prediction_sites.values():
             if prediction_site in posterior_samples:
-                posterior_samples[prediction_site].squeeze_(-3)
+                while len(posterior_samples[prediction_site].shape) > 3:
+                    posterior_samples[prediction_site].squeeze_(-4)
 
         return posterior_samples
 
