@@ -34,7 +34,7 @@ class Prediction_Score(BaseModel):
     mean_prob: float
     median_prob: float
     baseline_diff: float
-    prob_interval: tuple[float, float] = Field(examples=[(0.1, 0.5), (0.0, 1.0)])
+    prob_interval: list[float] = Field(..., examples=[[0.1, 0.5]])
 
 
 def iterate_over_independent_samples(
@@ -404,8 +404,8 @@ class Simple_Model:
                 probs = posterior_samples
                 mean_probs = probs.mean(0)
                 median_probs = probs.median(0)[0]
-                intervals: list[tuple[float, ...]] = [
-                    tuple(interval.tolist())
+                intervals: list[list[float]] = [
+                    interval.tolist()
                     for interval in (
                         pyro.ops.stats.hpdi(probs, interval_size).squeeze(-1).T
                     )
