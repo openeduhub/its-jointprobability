@@ -1,9 +1,13 @@
-{ lib, nix-filter }:
+{
+  lib,
+  nix-filter,
+  its-data-overlay,
+}:
 rec {
   default = its-jointprobability;
 
   # add the python library and its related python libraries
-  python-lib = (
+  python-lib = lib.composeExtensions its-data-overlay (
     final: prev: {
       pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
         (python-final: python-prev: {
@@ -19,7 +23,7 @@ rec {
 
   # add the standalone python application (without also adding the python
   # library)
-  its-jointprobability = (
+  its-jointprobability = lib.composeExtensions its-data-overlay (
     final: prev:
     let
       py-pkgs = final.python3Packages;
