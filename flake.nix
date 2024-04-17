@@ -151,7 +151,7 @@
                   openapi-checks = self.inputs.openapi-checks.lib.${system};
                 in
                 (openapi-checks.test-service {
-                  service-bin = "${pkgs-without-cuda.its-jointprobability} ${pkgs-without-cuda.its-jointprobability-model} --debug";
+                  service-bin = "${pkgs-without-cuda.its-jointprobability}/bin/its-jointprobability --debug";
                   service-port = 8080;
                   openapi-domain = "/openapi.json";
                   memory-size = 4 * 1024;
