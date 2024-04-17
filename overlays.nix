@@ -23,10 +23,11 @@ rec {
 
   # add the standalone python application (without also adding the python
   # library)
-  its-jointprobability = lib.composeExtensions its-data-overlay (
+  its-jointprobability = (
     final: prev:
     let
-      py-pkgs = final.python3Packages;
+      # add the python library to python, without exposing it to the outside
+      py-pkgs = (final.extend python-lib).python3Packages;
       its-jointprobability = py-pkgs.callPackage ./python-lib.nix { inherit nix-filter; };
     in
     {
