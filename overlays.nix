@@ -28,10 +28,9 @@ rec {
     let
       # add the python library to python, without exposing it to the outside
       py-pkgs = (final.extend python-lib).python3Packages;
-      its-jointprobability = py-pkgs.callPackage ./python-lib.nix { inherit nix-filter; };
     in
     {
-      its-jointprobability = py-pkgs.callPackage ./package.nix { inherit its-jointprobability; };
+      its-jointprobability = py-pkgs.callPackage ./package.nix { };
     }
   );
 }
