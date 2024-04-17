@@ -20,7 +20,7 @@
 }:
 buildPythonPackage {
   pname = "its-jointprobability";
-  version = "0.2.2";
+  version = "0.2.3";
   format = "setuptools";
 
   src = nix-filter {

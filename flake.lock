@@ -123,11 +123,11 @@
       },
       "locked": {
         "host": "gitlab.gwdg.de",
-        "lastModified": 1712932841,
-        "narHash": "sha256-EA1Gcgxk2AufgSvPCHThq6PdHaF9slWv7RBdPwiVUx0=",
+        "lastModified": 1713355298,
+        "narHash": "sha256-wpv+3F0veoAem4rYdY6KgzSV1A48gn9RqC2PIZwBpzU=",
         "owner": "jopitz",
         "repo": "its-jointprobability-model",
-        "rev": "980547756c8b6b95bac17f9e2bac5aefc1cdf477",
+        "rev": "3432eedd345fc33355775851e9def91010ecbf68",
         "type": "gitlab"
       },
       "original": {
