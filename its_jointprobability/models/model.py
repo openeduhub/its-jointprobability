@@ -372,6 +372,11 @@ class Simple_Model:
             progress_bar=True,
         )
 
+        # remove the leading empty dimension from the samples
+        baseline_samples = {
+            key: value.squeeze(0) for key, value in baseline_samples.items()
+        }
+
         prediction_scores = next(
             self._predict_from_posterior_samples(
                 iterate_over_independent_samples(baseline_samples),

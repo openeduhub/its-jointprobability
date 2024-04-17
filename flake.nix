@@ -108,11 +108,11 @@
           {
             retrain-model = {
               type = "app";
-              program = "${self.outputs.packages.${system}.default}/bin/retrain-model";
+              program = "${pkgs-without-cuda.its-jointprobability}/bin/retrain-model";
             };
             run-study = {
               type = "app";
-              program = "${self.outputs.packages.${system}.optuna-env}/bin/study-prodslda";
+              program = "${pkgs-without-cuda.its-jointprobability-with-optuna}/bin/study-prodslda";
             };
           }
           //
@@ -120,11 +120,11 @@
           (nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
             retrain-model-with-cuda = {
               type = "app";
-              program = "${self.outputs.packages.${system}.with-cuda}/bin/retrain-model";
+              program = "${pkgs-with-cuda.its-jointprobability}/bin/retrain-model";
             };
             run-study-with-cuda = {
               type = "app";
-              program = "${self.outputs.packages.${system}.optuna-env-with-cuda}/bin/study-prodslda";
+              program = "${pkgs-with-cuda.its-jointprobability-with-optuna}/bin/study-prodslda";
             };
           });
 
@@ -151,7 +151,7 @@
                   openapi-checks = self.inputs.openapi-checks.lib.${system};
                 in
                 (openapi-checks.test-service {
-                  service-bin = "${self.packages.${system}.default}/bin/its-jointprobability --debug";
+                  service-bin = "${pkgs-without-cuda.its-jointprobability} ${pkgs-without-cuda.its-jointprobability-model} --debug";
                   service-port = 8080;
                   openapi-domain = "/openapi.json";
                   memory-size = 4 * 1024;

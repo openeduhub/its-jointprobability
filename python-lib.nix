@@ -16,7 +16,6 @@
   plotly,
   scikit-learn,
   sqlite,
-  its-jointprobability-model,
   withOptuna ? false,
 }:
 buildPythonPackage {
@@ -41,13 +40,6 @@ buildPythonPackage {
 
   # this package has no tests, and the import test fails for some reason
   doCheck = false;
-
-  # replace local lookups of the model
-  prePatch = ''
-    substituteInPlace its_jointprobability/*.py \
-      --replace "Path.cwd() / \"data\"" \
-                "Path(\"${its-jointprobability-model}\")"
-  '';
 
   propagatedBuildInputs =
     [

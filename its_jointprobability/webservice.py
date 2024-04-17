@@ -2,6 +2,7 @@
 import argparse
 from collections.abc import Sequence
 import math
+import os
 from pathlib import Path
 
 import torch
@@ -18,6 +19,12 @@ from its_jointprobability.models.prodslda import ProdSLDA
 def main():
     # define CLI arguments
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model-dir",
+        help="The directory which contains the model data (i.e. ProdSLDA_{pyro,state,kwargs}.pt)",
+        type=str,
+        default=None,
+    )
     parser.add_argument(
         "--port", action="store", default=8080, help="Port to listen on", type=int
     )
@@ -41,9 +48,13 @@ def main():
     debug: bool = args.debug
 
     # import the model and auxiliary data
-    data_dir = Path.cwd() / "data"
+    # if the model location has not been set, try to look it up in the
+    # environment variables
+    if args.model_dir is None:
+        args.model_dir = os.environ["DATA_DIR"]
+    model_dir = Path(args.model_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(ProdSLDA, data_dir, device=device)
+    model = load_model(ProdSLDA, model_dir, device=device)
 
     class Prediction_Data(BaseModel):
         """Input to be used for prediction."""
