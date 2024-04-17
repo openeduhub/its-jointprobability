@@ -60,8 +60,8 @@ class ProdSLDA(Model):
         id_label_dicts: Sequence[dict[str, str]],
         # model settings
         num_topics: int = 500,
-        nu_loc: float = -6.7,
-        nu_scale: float = 0.85,
+        nu_loc: float = 0.0,
+        nu_scale: float = 1.0,
         mle_priors: bool = True,
         # variational auto-encoder settings
         hid_size: int = 1000,
@@ -271,13 +271,6 @@ class ProdSLDA(Model):
                 theta=theta_q, nu=nu_q, a_scale=guide_params.a_scale
             )
 
-            # draw from the variational distribution of the targets for
-            # unobserved data
-            targets_q = self.targets_dist(
-                target_probs=target_probs_q,
-                suffix="_unobserved",
-            )
-
     def model_params(self, docs: torch.Tensor) -> Parameters:
         n = sum(self.target_sizes)
 
@@ -383,7 +376,7 @@ class ProdSLDA(Model):
             nu = pyro.sample("nu", dist.Normal(nu_loc, nu_scale).to_event(2))
 
         if len(nu.shape) > 2 and nu.shape[-3] == 1:
-            nu.squeeze_(-3)
+            nu = nu.squeeze(-3)
 
         return nu
 
@@ -417,7 +410,7 @@ class ProdSLDA(Model):
             )
 
         if len(a.shape) > 2 and a.shape[-3] == 1:
-            a.squeeze_(-3)
+            a = a.squeeze(-3)
 
         return [
             F.sigmoid(a_local)
@@ -503,13 +496,13 @@ class ProdSLDA(Model):
         # the following sites have a leading dummy-dimension during posterior
         # sampling. drop them before returning the samples
         if "nu" in posterior_samples:
-            while len(posterior_samples["nu"].shape) > 3:
-                posterior_samples["nu"].squeeze_(-4)
+            posterior_samples["nu"] = posterior_samples["nu"].squeeze(-3)
 
         for prediction_site in self.prediction_sites.values():
             if prediction_site in posterior_samples:
-                while len(posterior_samples[prediction_site].shape) > 3:
-                    posterior_samples[prediction_site].squeeze_(-4)
+                posterior_samples[prediction_site] = posterior_samples[
+                    prediction_site
+                ].squeeze(-3)
 
         return posterior_samples
 
@@ -573,7 +566,7 @@ def train_model(
     max_epochs: int = 1000,
     num_particles: int = 1,
     initial_lr: float = 0.09,
-    gamma: float = 0.25,
+    gamma: float = 1.0,
     betas: tuple[float, float] = (0.3, 0.18),
     seed: int = 0,
     initial_annealing_factor: float = 0.012,
