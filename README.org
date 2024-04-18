@@ -74,6 +74,12 @@ Once the data has been loaded, the topic model will be trained (this will take a
 
 Finally, the Bayesian classification model is trained and saved under =classification=. At this point, some quality metrics will be computed for the model on the training data. If ~test_data_labeled~ and ~test_targets~ are present in the given directory (analogous to the training data), these quality metrics will also be computed for this testing data.
 
+*** Multiple data directories
+
+It is possible to provide multiple data directories to the training process. This will result in the data being automatically concatenate (combining shared target fields, if they have the exact same name).
+
+Note, however, that any missing fields will be assumed to be filled with non-assignments. While this is no issue for training, as such documents will not be "observed" by the model, it can be highly problematic for evaluation on a separate data set. This is because for the separate data set, any non-assignment (even if all categories are missing) are considered to be correct. Thus we recommend running evaluation (with the =--eval-only= flag of the =retrain-model= executable) is run separately for each data source. 
+
 ** As a Python Library
 :PROPERTIES:
 :header-args: :session *python:its-jointprobability-demo* :results output :exports both :async yes

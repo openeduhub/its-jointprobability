@@ -1,6 +1,7 @@
 import argparse
 import math
 from collections.abc import Iterable, Sequence
+from functools import reduce
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -15,6 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from its_data.default_pipelines.data import (
     BoW_Data,
+    Processed_Data,
+    Target_Data,
     balanced_split,
     publish,
     subset_data_points,
@@ -33,6 +36,7 @@ from its_jointprobability.utils import (
     default_data_loader,
     sequential_data_loader,
 )
+from its_prep import partial
 from torch.distributions import constraints
 
 
@@ -607,6 +611,7 @@ def retrain_model_cli():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "path",
+        nargs="+",
         type=str,
         help="The path to the directory containing the training data",
     )
@@ -663,17 +668,93 @@ def retrain_model_cli():
 
     args = parser.parse_args()
 
-    path = Path(args.path)
+    paths = [Path(path) for path in args.path]
 
-    try:
-        if args.skip_cache:
-            raise FileNotFoundError()
-        data = import_data(path)
-    except FileNotFoundError:
-        print("Processed data not found. Generating it...")
-        data = make_data(path)
-        publish(data.train, path, name="train")
-        publish(data.test, path, name="test")
+    data_list: list[Split_Data] = []
+    for path in paths:
+        try:
+            if args.skip_cache:
+                raise FileNotFoundError()
+            data_list.append(import_data(path))
+            print(data_list[-1].train.target_data.keys())
+        except FileNotFoundError:
+            print("Processed data not found. Generating it...")
+            data_list.append(make_data(path))
+            publish(data_list[-1].train, path, name="train")
+            publish(data_list[-1].test, path, name="test")
+
+    def stack(*data: Split_Data) -> Split_Data:
+        assert len(data) > 0
+        if len(data) < 2:
+            return data[0]
+
+        def stack_target_data(
+            a: Target_Data | None, b: Target_Data | None, a_len: int, b_len: int
+        ) -> Target_Data:
+            if a is None:
+                assert b is not None
+                a = Target_Data(
+                    arr=np.zeros([a_len, b.arr.shape[-1]], dtype=bool),
+                    in_test_set=np.zeros([a_len], dtype=bool),
+                    uris=b.uris,
+                    labels=b.labels,
+                )
+            if b is None:
+                assert a is not None
+                b = Target_Data(
+                    arr=np.zeros([b_len, a.arr.shape[-1]], dtype=bool),
+                    in_test_set=np.zeros([b_len], dtype=bool),
+                    uris=a.uris,
+                    labels=a.labels,
+                )
+
+            assert all(a.uris == b.uris)
+            assert all(a.labels == b.labels)
+
+            return Target_Data(
+                arr=np.concatenate([a.arr, b.arr]),
+                in_test_set=np.concatenate([a.in_test_set, b.in_test_set]),
+                uris=a.uris,
+                labels=b.labels,
+            )
+
+        def stack_nested_target_data(
+            a: dict[str, Target_Data], b: dict[str, Target_Data], a_len: int, b_len: int
+        ) -> dict[str, Target_Data]:
+            return {
+                key: stack_target_data(
+                    a.get(key, None), b.get(key, None), a_len=a_len, b_len=b_len
+                )
+                for key in set(a.keys()) | set(b.keys())
+            }
+
+        def stack_bow_data(a: BoW_Data, b: BoW_Data, words=None) -> BoW_Data:
+            a_len = len(a.raw_texts)
+            b_len = len(b.raw_texts)
+            # re-calculate BoW's, as the different data sources may have different vocabularies
+            return BoW_Data.from_processed_data(
+                data=Processed_Data(
+                    raw_texts=np.concatenate([a.raw_texts, b.raw_texts]),
+                    ids=np.concatenate([a.ids, b.ids]),
+                    editor_arr=np.concatenate([a.editor_arr, b.editor_arr]),
+                    target_data=stack_nested_target_data(
+                        a.target_data, b.target_data, a_len=a_len, b_len=b_len
+                    ),
+                    languages=np.concatenate([a.languages, b.languages]),
+                    processed_texts=a.processed_texts + b.processed_texts,
+                ),
+                words=words,
+            )
+
+        stacked_train = reduce(stack_bow_data, [x.train for x in data])
+        stacked_test = reduce(
+            partial(stack_bow_data, words=stacked_train.words),
+            [x.test for x in data],
+        )
+
+        return Split_Data(train=stacked_train, test=stacked_test)
+
+    data = stack(*data_list)
 
     if not args.include_unconfirmed:
         train_data = subset_data_points(data.train, np.where(data.train.editor_arr)[0])
@@ -739,10 +820,10 @@ def retrain_model_cli():
             max_epochs=args.max_epochs,
         )
 
-        save_model(prodslda, path, suffix=suffix)
+        save_model(prodslda, Path.cwd(), suffix=suffix)
     else:
         # try:
-        prodslda = load_model(ProdSLDA, path, device, suffix=suffix)
+        prodslda = load_model(ProdSLDA, Path.cwd(), device, suffix=suffix)
         # except FileNotFoundError:
         #     prodslda = load_model(ProdSLDA, path, device)
 
@@ -752,7 +833,14 @@ def retrain_model_cli():
 
 
 def run_evaluation(model: ProdSLDA, data: Split_Data, eval_sites: dict[str, str]):
-    train_docs, train_targets, test_docs, test_targets = set_up_data(data)
+    # re-calculate the bows, according to the model's vocabulary
+    data_adjusted = Split_Data(
+        *[
+            BoW_Data.from_processed_data(x, words=model.vocab)
+            for x in [data.train, data.test]
+        ]
+    )
+    train_docs, train_targets, test_docs, test_targets = set_up_data(data_adjusted)
     titles = {key: value.labels for key, value in data.train.target_data.items()}
 
     # evaluate the newly trained model
