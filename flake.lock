@@ -76,11 +76,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1713271467,
-        "narHash": "sha256-SsUp1jA/5VfgdUKOcd8O0eiwecBJrxsWcoOqSubmOv4=",
+        "lastModified": 1713423052,
+        "narHash": "sha256-iCunVh7cP15YOYEF8618IFwsum7DbFABgFnv0/+l9qA=",
         "owner": "openeduhub",
         "repo": "its-data",
-        "rev": "04fb6511ee9060c5651ced9716da7048aa385007",
+        "rev": "3d484af48e6d0118991e6be710a6def4f3105d21",
         "type": "github"
       },
       "original": {
