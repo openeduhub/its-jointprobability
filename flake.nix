@@ -56,6 +56,7 @@
         inherit (nixpkgs) lib;
         nix-filter = self.inputs.nix-filter.lib;
         its-data-overlay = self.inputs.its-data.overlays.default;
+        model-overlay = self.inputs.model.overlays.default;
       };
     }
     // flake-utils.lib.eachDefaultSystem (
@@ -81,7 +82,6 @@
               })
               self.outputs.overlays.python-lib
               self.outputs.overlays.its-jointprobability
-              self.inputs.model.overlays.default
             ];
           };
 

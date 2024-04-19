@@ -2,13 +2,16 @@
   lib,
   nix-filter,
   its-data-overlay,
+  model-overlay,
 }:
 rec {
   default = its-jointprobability;
 
-  # add the python library and its related python libraries
-  python-lib = lib.composeExtensions its-data-overlay (
-    final: prev: {
+  # add the python library and its related dependencies
+  python-lib = lib.composeManyExtensions [
+    its-data-overlay
+    model-overlay
+    (final: prev: {
       pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
         (python-final: python-prev: {
           its-jointprobability = python-final.callPackage ./python-lib.nix { inherit nix-filter; };
@@ -18,11 +21,11 @@ rec {
           };
         })
       ];
-    }
-  );
+    })
+  ];
 
   # add the standalone python application (without also adding the python
-  # library)
+  # library or additional dependencies)
   its-jointprobability = (
     final: prev:
     let
