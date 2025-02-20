@@ -53,7 +53,15 @@ def main():
     if args.model_dir is None:
         args.model_dir = os.environ["DATA_DIR"]
     model_dir = Path(args.model_dir)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # find a suitable backend
+    devices = ['cuda', 'mps', 'cpu']
+    for d in devices:
+        module = getattr(torch, d, None)
+        if module and module.is_available():
+            device = torch.device(d)
+            break
+    else:
+        raise RuntimeError(f"No device found (tried: {', '.join(devices)})")
     model = load_model(ProdSLDA, model_dir, device=device)
 
     class Prediction_Data(BaseModel):
