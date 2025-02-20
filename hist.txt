@@ -1,0 +1,16 @@
+ 1135  ls -hal data 
+ 1136  ls -hal .
+ 1137  cat ProdSLDA_kwargs.pt
+ 1138  git lfs install
+ 1139  cat ProdSLDA_kwargs.pt
+ 1140  git lfs fetch
+ 1141  git lfs pull
+ 1142  ls -hal .
+ 1143  cd ..
+ 1144  DATA_DIR=$PWD/data uv run python src/its_jointprobability/webservice.py
+ 1145  DATA_DIR=$PWD/data uv run python src/its_jointprobability/webservice.py
+ 1146  DATA_DIR=$PWD/data uv run python src/its_jointprobability/webservice.py
+ 1147  DATA_DIR=$PWD/data uv run python src/its_jointprobability/webservice.py
+ 1148  DATA_DIR=$PWD/data uv run python src/its_jointprobability/webservice.py
+ 1149  history
+ 1150  history | less

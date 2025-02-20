@@ -4,6 +4,8 @@ from typing import NamedTuple, TypeVar
 import numpy as np
 import pyro
 import torch
+import torch.serialization
+from torch.distributions.constraints import _Real, _GreaterThan
 from its_data.default_pipelines.data import (
     BoW_Data,
     Processed_Data,
@@ -102,7 +104,8 @@ def load_model(
         cls_name += f"_{suffix}"
 
     # load data
-    pyro.get_param_store().load(path / f"{cls_name}_pyro.pt", map_location=device)
+    with torch.serialization.safe_globals([_Real, _GreaterThan]):
+        pyro.get_param_store().load(path / f"{cls_name}_pyro.pt", map_location=device)
     kwargs = torch.load(path / f"{cls_name}_kwargs.pt", map_location=device)
     state_dict = torch.load(path / f"{cls_name}_state.pt", map_location=device)
 

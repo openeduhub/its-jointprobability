@@ -1,0 +1,26 @@
+[project]
+name = "its-jointprobability"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Jason Mansour", email = "jason.mansour@gwdg.de" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.8",
+    "icecream>=2.1.4",
+    "its-prep",
+    "matplotlib>=3.10.0",
+    "pandas>=2.2.3",
+    "pydantic>=2.10.6",
+    "pyro-ppl>=1.9.1",
+    "uvicorn>=0.34.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+its-prep = { git = "https://github.com/openeduhub/its-prep.git", branch = "fix-deps" }
