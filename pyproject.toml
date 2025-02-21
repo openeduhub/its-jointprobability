@@ -30,3 +30,8 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 its-prep = { git = "https://github.com/openeduhub/its-prep.git", branch = "fix-deps" }
 its-data = { git = "https://github.com/openeduhub/its-data.git" }
+
+[dependency-groups]
+dev = [
+    "fastapi[standard]>=0.115.8",
+]
